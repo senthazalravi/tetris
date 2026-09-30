@@ -28,25 +28,26 @@ async function req(jar: Jar, path: string, opts: RequestInit = {}) {
 }
 
 async function main() {
+  const suffix = crypto.randomUUID().slice(0, 8);
   const aliceJar: Jar = { cookie: "" };
   const bobJar: Jar = { cookie: "" };
 
   await req(aliceJar, "/auth/register", {
     method: "POST",
     body: JSON.stringify({
-      email: "a2@example.com",
+      email: `alice_${suffix}@example.com`,
       password: "password12345",
-      username: "alice2",
-      displayName: "Alice2",
+      username: `alice_${suffix}`,
+      displayName: "Alice",
     }),
   });
   await req(bobJar, "/auth/register", {
     method: "POST",
     body: JSON.stringify({
-      email: "b2@example.com",
+      email: `bob_${suffix}@example.com`,
       password: "password12345",
-      username: "bob2",
-      displayName: "Bob2",
+      username: `bob_${suffix}`,
+      displayName: "Bob",
     }),
   });
 
@@ -64,7 +65,10 @@ async function main() {
     body: JSON.stringify(bobBundle),
   });
 
-  const bobCard = (await req(aliceJar, "/users/lookup?username=bob2")) as {
+  const bobCard = (await req(
+    aliceJar,
+    `/users/lookup?username=bob_${suffix}`,
+  )) as {
     userId: string;
   };
   const bobRemote = (await req(
