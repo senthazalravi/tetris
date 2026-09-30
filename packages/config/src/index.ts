@@ -15,10 +15,17 @@ export const PASSCODE_MIN_LENGTH = 4;
 export const DISPLAY_NAME_MAX = 40;
 
 export const MAX_CIPHERTEXT_BYTES = 64 * 1024;
-/** Free-tier friendly: R2 keeps at most ~24h of data per user. */
-export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+/**
+ * Documents, photos, audio and everything else. The only real ceiling is the
+ * Workers free plan's 100 MB request body, so stay just under it.
+ */
+export const MAX_ATTACHMENT_BYTES = 90 * 1024 * 1024;
+/** Videos are the one thing we cap hard, to protect free-tier R2 + bandwidth. */
+export const MAX_VIDEO_BYTES = 16 * 1024 * 1024;
+/** Longest voice message we record (ms). */
+export const MAX_VOICE_MS = 5 * 60 * 1000;
 /** Total live attachment bytes one user may have on the server at once. */
-export const MAX_USER_ATTACHMENT_BYTES = 250 * 1024 * 1024;
+export const MAX_USER_ATTACHMENT_BYTES = 300 * 1024 * 1024;
 export const MAX_AVATAR_BYTES = 200 * 1024;
 
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;

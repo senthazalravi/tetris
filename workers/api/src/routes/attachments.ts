@@ -39,37 +39,44 @@ attachmentRoutes.put("/conversations/:id/attachments", requireUnlocked, async (c
   if (!(await isMember(c.env.DB, convId, me.id, me.communication_epoch))) {
     return c.json({ error: "Not a member of this conversation" }, 403);
   }
-  const declared = Number(c.req.header("content-length") ?? 0);
-  if (declared > MAX_ATTACHMENT_BYTES + CIPHER_OVERHEAD) {
-    return c.json({ error: "File too large (25 MB max)" }, 413);
+  // Stream straight into R2: a Worker only has 128 MB of memory, so never
+  // buffer a whole upload. The length must be declared up front.
+  const size = Number(c.req.header("content-length") ?? 0);
+  const limit = MAX_ATTACHMENT_BYTES + CIPHER_OVERHEAD;
+  if (!Number.isFinite(size) || size <= CIPHER_OVERHEAD) {
+    return c.json({ error: "Empty or unsized upload" }, 400);
   }
-  const bytes = new Uint8Array(await c.req.arrayBuffer());
-  if (bytes.byteLength <= CIPHER_OVERHEAD || bytes.byteLength > MAX_ATTACHMENT_BYTES + CIPHER_OVERHEAD) {
-    return c.json({ error: "File too large (25 MB max)" }, 413);
+  if (size > limit) {
+    return c.json({ error: "File too large (90 MB max)" }, 413);
   }
+  if (!c.req.raw.body) return c.json({ error: "Empty upload" }, 400);
 
   const used = await c.env.DB.prepare(
     `SELECT COALESCE(SUM(size), 0) AS total FROM attachments WHERE owner_user_id = ?`,
   )
     .bind(me.id)
     .first<{ total: number }>();
-  if ((used?.total ?? 0) + bytes.byteLength > MAX_USER_ATTACHMENT_BYTES) {
+  if ((used?.total ?? 0) + size > MAX_USER_ATTACHMENT_BYTES) {
     return c.json({ error: "Attachment quota reached. It frees up as files expire." }, 413);
   }
 
   const id = randomId("att");
   const key = `att/${convId}/${id}`;
-  await c.env.ATTACHMENTS.put(key, bytes, {
+  const stored = await c.env.ATTACHMENTS.put(key, c.req.raw.body, {
     httpMetadata: { contentType: "application/octet-stream" },
   });
+  if (stored.size !== size) {
+    await c.env.ATTACHMENTS.delete(key);
+    return c.json({ error: "Upload was cut short" }, 400);
+  }
   const now = Date.now();
   await c.env.DB.prepare(
     `INSERT INTO attachments (id, owner_user_id, conversation_id, message_id, object_key, size, created_at, expires_at)
      VALUES (?, ?, ?, NULL, ?, ?, ?, ?)`,
   )
-    .bind(id, me.id, convId, key, bytes.byteLength, now, now + PENDING_ATTACHMENT_TTL_MS)
+    .bind(id, me.id, convId, key, size, now, now + PENDING_ATTACHMENT_TTL_MS)
     .run();
-  return c.json({ attachmentId: id, size: bytes.byteLength }, 201);
+  return c.json({ attachmentId: id, size }, 201);
 });
 
 attachmentRoutes.get("/attachments/:id", requireUnlocked, async (c) => {
