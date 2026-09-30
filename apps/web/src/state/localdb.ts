@@ -8,7 +8,7 @@ import type { MessageEnvelope } from "@lop/protocol";
  */
 
 export type MessageContent =
-  | (MessageEnvelope & { kind: "text" | "file" })
+  | MessageEnvelope
   | { v: 1; kind: "system"; text: string }
   | { v: 1; kind: "undecryptable" };
 
@@ -25,6 +25,13 @@ export interface LocalMessage {
   deleted?: boolean;
   /** Incoming message we have not yet sent a "read" receipt for. */
   unread?: boolean;
+  /** userId → emoji. Only ever set on visible (text/file) messages. */
+  reactions?: Record<string, string>;
+  /** userId → chosen option indexes. Only ever set on poll messages. */
+  votes?: Record<string, number[]>;
+  /** Outgoing: when the recipient's device received / read it (from the server). */
+  deliveredAt?: number;
+  readAt?: number;
   content: MessageContent;
 }
 

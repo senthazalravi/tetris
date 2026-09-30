@@ -1,4 +1,4 @@
-import { create } from "zustand";
+﻿import { create } from "zustand";
 import {
   CryptoError,
   decryptBlob,
@@ -12,6 +12,9 @@ import {
   type RatchetState,
 } from "@lop/crypto";
 import {
+  POLL_MAX_OPTIONS,
+  POLL_OPTION_MAX,
+  POLL_QUESTION_MAX,
   decodeEnvelope,
   encodeEnvelope,
   type AttachmentRef,
@@ -27,10 +30,36 @@ import type {
 } from "@lop/types";
 import { api, ApiError, getVaultToken } from "@/lib/api";
 import { newMessageId } from "@/lib/format";
-import { imageMeta, mediaKind } from "@/lib/media";
+import { imageMeta, mediaKind, mimeOf } from "@/lib/media";
 import type { LocalMessage, LocalState, MessageContent } from "./localdb";
 import { saveKeys, vault } from "./vault";
 import { useSession } from "./session";
+
+function attachmentBlob(plain: Uint8Array, att: Pick<AttachmentRef, "mime" | "name">): Blob {
+  // Always derive a real MIME from the name when the stored one is blank or
+  // generic — an empty type makes some browsers refuse to paint <img>/<video>.
+  const kind = mediaKind(att.mime, att.name);
+  const type = kind === "file" ? "application/octet-stream" : mimeOf({ type: att.mime, name: att.name });
+  // Copy so we never hand a view into a detached ArrayBuffer to Blob().
+  return new Blob([plain.slice()], { type });
+}
+
+async function objectUrlFor(plain: Uint8Array, att: AttachmentRef): Promise<string> {
+  const blob = attachmentBlob(plain, att);
+  const url = URL.createObjectURL(blob);
+  if (mediaKind(att.mime, att.name) === "image") {
+    try {
+      // Prove the bytes actually decode as an image before we cache the URL.
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+    } catch {
+      URL.revokeObjectURL(url);
+      throw new Error("Decoded attachment is not a valid image");
+    }
+  }
+  return url;
+}
 
 /* ================================================================== */
 /* store                                                               */
@@ -45,6 +74,8 @@ interface ChatState {
   activeId: string | null;
   typing: Record<string, number>;
   replyTo: Record<string, LocalMessage | null>;
+  /** Private, device-local nicknames: peer userId → name. Never sent anywhere. */
+  nicknames: Record<string, string>;
   toast: string | null;
 }
 
@@ -57,6 +88,7 @@ export const useChat = create<ChatState>(() => ({
   activeId: null,
   typing: {},
   replyTo: {},
+  nicknames: {},
   toast: null,
 }));
 
@@ -176,7 +208,8 @@ export async function startEngine() {
     }
     (grouped[m.convId] ??= []).push(m);
   }
-  set({ messages: grouped, ready: false, connection: "connecting" });
+  const nicknames = (await db.getKv<Record<string, string>>("nicknames")) ?? {};
+  set({ messages: grouped, nicknames, ready: false, connection: "connecting" });
 
   await refreshConversations();
   await refreshContacts();
@@ -202,7 +235,8 @@ export function stopEngine() {
   window.clearTimeout(syncTimer);
   document.removeEventListener("visibilitychange", onVisible);
   window.removeEventListener("focus", onVisible);
-  for (const p of attCache.values()) void p.then((u) => URL.revokeObjectURL(u)).catch(() => {});
+  for (const url of attUrls.values()) URL.revokeObjectURL(url);
+  attUrls.clear();
   attCache.clear();
   pendingFiles.clear();
   set({
@@ -214,6 +248,7 @@ export function stopEngine() {
     activeId: null,
     typing: {},
     replyTo: {},
+    nicknames: {},
     toast: null,
   });
 }
@@ -474,8 +509,16 @@ async function handleSyncMessage(m: SyncMessage): Promise<LocalMessage | null> {
   if (m.direction === "out") {
     if (!existing || existing.deleted) return null;
     const next = m.state as LocalState;
-    if (RANK[next] > RANK[existing.state]) {
-      await saveAndShow({ ...existing, state: next });
+    const advanced = RANK[next] > RANK[existing.state];
+    const deliveredAt = m.deliveredAt ?? existing.deliveredAt;
+    const readAt = m.readAt ?? existing.readAt;
+    if (advanced || deliveredAt !== existing.deliveredAt || readAt !== existing.readAt) {
+      await saveAndShow({
+        ...existing,
+        state: advanced ? next : existing.state,
+        ...(deliveredAt ? { deliveredAt } : {}),
+        ...(readAt ? { readAt } : {}),
+      });
     }
     return null;
   }
@@ -534,10 +577,16 @@ async function handleSyncMessage(m: SyncMessage): Promise<LocalMessage | null> {
       createdAt: m.createdAt,
       expiresAt: m.expiresAt,
       state: "delivered",
-      unread: !visible,
+      unread: !visible && content.kind !== "reaction" && content.kind !== "vote",
       content,
     };
     await saveAndShow(msg);
+    if (content.kind === "reaction" && content.reaction) {
+      await applyReaction(m.conversationId, content.reaction.target, m.senderUserId, content.reaction.emoji);
+    }
+    if (content.kind === "vote" && content.vote) {
+      await applyVote(m.conversationId, content.vote.target, m.senderUserId, content.vote.choices);
+    }
     return msg;
   });
 }
@@ -578,13 +627,17 @@ export interface SendInput {
   text: string;
   file?: File | null;
   replyTo?: LocalMessage | null;
+  /** The file is a recorded voice message of this length. */
+  voiceMs?: number;
 }
 
 function replyRefFor(m: LocalMessage): ReplyRef {
   let preview = "";
   const c = m.content;
   if (c.kind === "text") preview = c.body;
-  else if (c.kind === "file") preview = c.body || c.attachment?.name || "Attachment";
+  else if (c.kind === "file") {
+    preview = c.body || (c.attachment?.voice ? "Voice message" : c.attachment?.name) || "Attachment";
+  } else if (c.kind === "poll") preview = `Poll: ${c.poll?.question ?? ""}`;
   return {
     id: m.id,
     senderId: m.senderId,
@@ -618,9 +671,10 @@ export async function sendMessage(convId: string, input: SendInput): Promise<voi
         id: "",
         key: "",
         name: input.file.name || "file",
-        mime: input.file.type || "application/octet-stream",
+        mime: mimeOf({ type: input.file.type, name: input.file.name || "" }),
         size: input.file.size,
         ...(meta ?? {}),
+        ...(input.voiceMs ? { voice: true, durationMs: Math.round(input.voiceMs) } : {}),
       },
     };
     pendingFiles.set(id, input.file);
@@ -658,7 +712,7 @@ export async function retryMessage(convId: string, id: string) {
 
 async function deliver(msg: LocalMessage) {
   const conv = convFor(msg.convId);
-  if (!conv || (msg.content.kind !== "text" && msg.content.kind !== "file")) return;
+  if (!conv || msg.content.kind === "system" || msg.content.kind === "undecryptable") return;
   const content = msg.content as MessageEnvelope;
 
   const fail = async (reason: string) => {
@@ -687,7 +741,11 @@ async function deliver(msg: LocalMessage) {
         };
         content.attachment = att;
         // The sender already has the plaintext: show it without re-downloading.
-        attCache.set(att.id, Promise.resolve(URL.createObjectURL(file)));
+        // Build the blob from the bytes in memory (not the picker's File, whose
+        // handle can go stale) so the sender's own copy always renders.
+        const url = await objectUrlFor(plain, att);
+        attUrls.set(att.id, url);
+        attCache.set(att.id, Promise.resolve(url));
         await saveAndShow({ ...msg, content: { ...content } });
       }
       attachmentId = content.attachment.id;
@@ -772,6 +830,161 @@ export async function deleteForEveryone(convId: string, id: string) {
   });
 }
 
+/** Remove every message of a conversation from this device only. */
+export async function clearChat(convId: string) {
+  const list = get().messages[convId] ?? [];
+  for (const m of list) {
+    await vault().db.deleteMessage(m.id);
+    pendingFiles.delete(m.id);
+  }
+  set((s) => ({
+    messages: { ...s.messages, [convId]: [] },
+    replyTo: { ...s.replyTo, [convId]: null },
+  }));
+}
+
+/* ---------------- reactions ---------------- */
+
+async function applyReaction(
+  convId: string,
+  targetId: string,
+  userId: string,
+  emoji: string | null,
+) {
+  const target = localMessage(convId, targetId);
+  if (!target || target.deleted) return;
+  if (!isVisibleKind(target.content.kind)) return;
+  const reactions = { ...(target.reactions ?? {}) };
+  if (emoji) reactions[userId] = emoji;
+  else delete reactions[userId];
+  const { reactions: _old, ...rest } = target;
+  await saveAndShow(Object.keys(reactions).length ? { ...rest, reactions } : rest);
+}
+
+/** Tapping the reaction you already gave removes it, like WhatsApp. */
+export async function sendReaction(convId: string, targetId: string, emoji: string) {
+  const conv = convFor(convId);
+  const target = localMessage(convId, targetId);
+  if (!conv || !target || target.deleted) return;
+  if (conv.blocked) {
+    toast("Unblock this contact to react.");
+    return;
+  }
+  const next = target.reactions?.[me()] === emoji ? null : emoji;
+  const now = Date.now();
+  await applyReaction(convId, targetId, me(), next);
+  const msg: LocalMessage = {
+    id: newMessageId(),
+    convId,
+    senderId: me(),
+    direction: "out",
+    createdAt: now,
+    // Reactions die with the message they belong to.
+    expiresAt: Math.max(target.expiresAt, now + 60_000),
+    state: "sending",
+    content: { v: 1, kind: "reaction", body: "", reaction: { target: targetId, emoji: next } },
+  };
+  await saveAndShow(msg);
+  await deliver(msg);
+}
+
+/** Kinds that show up as a bubble (reactions and votes are invisible carriers). */
+function isVisibleKind(kind: string) {
+  return kind === "text" || kind === "file" || kind === "poll";
+}
+
+/* ---------------- polls ---------------- */
+
+async function applyVote(convId: string, targetId: string, userId: string, choices: number[]) {
+  const target = localMessage(convId, targetId);
+  if (!target || target.deleted || target.content.kind !== "poll" || !target.content.poll) return;
+  const { options, multi } = target.content.poll;
+  const clean = [...new Set(choices)].filter((n) => n >= 0 && n < options.length).sort((a, b) => a - b);
+  const limited = multi ? clean : clean.slice(0, 1);
+  const votes = { ...(target.votes ?? {}) };
+  if (limited.length) votes[userId] = limited;
+  else delete votes[userId];
+  const { votes: _old, ...rest } = target;
+  await saveAndShow(Object.keys(votes).length ? { ...rest, votes } : rest);
+}
+
+export interface PollInput {
+  question: string;
+  options: string[];
+  multi: boolean;
+}
+
+export async function sendPoll(convId: string, input: PollInput) {
+  const conv = convFor(convId);
+  if (!conv) return;
+  if (conv.blocked) {
+    toast("Unblock this contact to send messages.");
+    return;
+  }
+  const question = input.question.trim().slice(0, POLL_QUESTION_MAX);
+  const options = input.options.map((o) => o.trim().slice(0, POLL_OPTION_MAX)).filter(Boolean);
+  if (!question || options.length < 2 || options.length > POLL_MAX_OPTIONS) return;
+  const now = Date.now();
+  const msg: LocalMessage = {
+    id: newMessageId(),
+    convId,
+    senderId: me(),
+    direction: "out",
+    createdAt: now,
+    expiresAt: now + MESSAGE_TTL_MS,
+    state: "sending",
+    content: { v: 1, kind: "poll", body: question, poll: { question, options, multi: input.multi } },
+  };
+  await saveAndShow(msg);
+  await deliver(msg);
+}
+
+/** Set (or retract, with an empty list) your vote on a poll. */
+export async function sendVote(convId: string, targetId: string, choices: number[]) {
+  const conv = convFor(convId);
+  const target = localMessage(convId, targetId);
+  if (!conv || !target || target.deleted || target.content.kind !== "poll") return;
+  if (conv.blocked) {
+    toast("Unblock this contact to vote.");
+    return;
+  }
+  const now = Date.now();
+  await applyVote(convId, targetId, me(), choices);
+  const mine = localMessage(convId, targetId)?.votes?.[me()] ?? [];
+  const msg: LocalMessage = {
+    id: newMessageId(),
+    convId,
+    senderId: me(),
+    direction: "out",
+    createdAt: now,
+    // A vote dies with its poll.
+    expiresAt: Math.max(target.expiresAt, now + 60_000),
+    state: "sending",
+    content: { v: 1, kind: "vote", body: "", vote: { target: targetId, choices: mine } },
+  };
+  await saveAndShow(msg);
+  await deliver(msg);
+}
+
+/* ---------------- nicknames ---------------- */
+
+export async function setNickname(peerUserId: string, nickname: string) {
+  const name = nickname.trim().slice(0, 40);
+  const next = { ...get().nicknames };
+  if (name) next[peerUserId] = name;
+  else delete next[peerUserId];
+  set({ nicknames: next });
+  await vault().db.setKv("nicknames", next);
+}
+
+/** What to call someone: your private nickname, else their profile name. */
+export function nameOf(
+  nicknames: Record<string, string>,
+  peer: { userId: string; displayName: string },
+): string {
+  return nicknames[peer.userId] || peer.displayName;
+}
+
 /* ---------------- reply / typing ---------------- */
 
 export function setReplyTo(convId: string, m: LocalMessage | null) {
@@ -808,19 +1021,35 @@ export function stopTyping(convId: string) {
 /* ================================================================== */
 
 const attCache = new Map<string, Promise<string>>();
+/** Live object URLs, so we can revoke them when a cached copy turns out bad. */
+const attUrls = new Map<string, string>();
+
+/** Forget a cached object URL so the next load re-fetches from the server. */
+export function evictAttachment(id: string) {
+  attCache.delete(id);
+  const url = attUrls.get(id);
+  if (url) {
+    URL.revokeObjectURL(url);
+    attUrls.delete(id);
+  }
+}
 
 /** Fetch ciphertext, decrypt in the browser, hand back an object URL. */
 export function loadAttachment(att: AttachmentRef): Promise<string> {
+  if (!att.id || !att.key) return Promise.reject(new Error("Missing attachment"));
   const hit = attCache.get(att.id);
   if (hit) return hit;
   const p = (async () => {
     const cipher = await api.getBinary(`/attachments/${att.id}`);
     const plain = await decryptBlob(cipher, att.key);
-    const type = mediaKind(att.mime) === "file" ? "application/octet-stream" : att.mime;
-    return URL.createObjectURL(new Blob([plain as unknown as BlobPart], { type }));
+    const url = await objectUrlFor(plain, att);
+    attUrls.set(att.id, url);
+    return url;
   })();
   attCache.set(att.id, p);
-  p.catch(() => attCache.delete(att.id));
+  p.catch(() => {
+    attCache.delete(att.id);
+  });
   return p;
 }
 
@@ -854,3 +1083,4 @@ async function pruneExpired() {
     return changed ? { messages: next } : {};
   });
 }
+
