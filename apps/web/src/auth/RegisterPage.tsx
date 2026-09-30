@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { MessageCircle } from "lucide-react";
 import { api } from "@/api/client";
 import { useAuth } from "@/auth/AuthContext";
 import { setupVaultOnRegister } from "@/crypto/vaultCrypto";
@@ -40,16 +41,24 @@ export function RegisterPage() {
   }
 
   return (
-    <div className="flex min-h-full items-center justify-center px-4">
+    <div className="flex min-h-full items-center justify-center bg-[var(--lop-bg)] px-4 py-8">
       <form
         onSubmit={onSubmit}
-        className="w-full max-w-md rounded-xl bg-[var(--lop-panel)] p-6 shadow-xl"
+        className="w-full max-w-md rounded-2xl border border-[var(--lop-border)] bg-[var(--lop-panel)] p-6 shadow-xl"
       >
-        <h1 className="text-2xl font-semibold">Create account</h1>
-        <p className="mt-1 text-sm text-[var(--lop-muted)]">
-          Email, password, and a unique @username.
-        </p>
-        <div className="mt-6 flex flex-col gap-3">
+        <div className="mb-5 flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--lop-panel-2)] text-[var(--lop-accent)]">
+            <MessageCircle size={20} />
+          </div>
+          <div>
+            <h1 className="text-xl font-semibold">Create account</h1>
+            <p className="text-sm text-[var(--lop-muted)]">
+              Email, password, and a unique @username
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-3">
           <Field label="Email" type="email" value={email} onChange={setEmail} required />
           <Field
             label="Password"
@@ -81,16 +90,19 @@ export function RegisterPage() {
             minLength={6}
           />
         </div>
-        {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
+        {error && <p className="mt-3 text-sm text-[var(--lop-danger)]">{error}</p>}
         <button
           type="submit"
           disabled={busy}
-          className="mt-6 w-full rounded-lg bg-[var(--lop-accent)] px-4 py-3 font-medium text-[#111] disabled:opacity-60"
+          className="mt-6 w-full rounded-xl bg-[var(--lop-accent)] px-4 py-3 font-semibold text-[#0b141a] disabled:opacity-60"
         >
           {busy ? "Creating…" : "Create account"}
         </button>
         <p className="mt-4 text-center text-sm text-[var(--lop-muted)]">
-          Already have an account? <Link to="/login">Log in</Link>
+          Already have an account?{" "}
+          <Link className="text-[var(--lop-accent)]" to="/login">
+            Log in
+          </Link>
         </p>
       </form>
     </div>
@@ -107,10 +119,10 @@ function Field(props: {
   placeholder?: string;
 }) {
   return (
-    <label className="block text-left text-sm">
+    <label className="block text-sm">
       <span className="text-[var(--lop-muted)]">{props.label}</span>
       <input
-        className="mt-1 w-full rounded-lg border border-[var(--lop-border)] bg-[var(--lop-panel-2)] px-3 py-2 outline-none focus:border-[var(--lop-accent)]"
+        className="mt-1 w-full rounded-xl border border-[var(--lop-border)] bg-[var(--lop-panel-2)] px-3 py-2.5 outline-none focus:border-[var(--lop-accent)]"
         type={props.type ?? "text"}
         value={props.value}
         onChange={(e) => props.onChange(e.target.value)}

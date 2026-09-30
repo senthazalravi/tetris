@@ -1,4 +1,32 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
+import {
+  Check,
+  CheckCheck,
+  Copy,
+  FileText,
+  Forward,
+  Info,
+  LogOut,
+  MessageCircle,
+  MoreVertical,
+  Paperclip,
+  Pencil,
+  Plus,
+  Reply,
+  Search,
+  Send,
+  Settings,
+  Trash2,
+  UserPlus,
+  X,
+} from "lucide-react";
 import { useAuth } from "@/auth/AuthContext";
 import { api } from "@/api/client";
 import {
@@ -51,23 +79,51 @@ function formatClock(ts: number): string {
   });
 }
 
-function Tick({ state }: { state: DeliveryState }) {
-  if (state === "read") {
-    return <span className="ml-1 text-[11px] text-[#53bdeb]">✓✓</span>;
+function formatListTime(ts: number): string {
+  const d = new Date(ts);
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  if (sameDay) return formatClock(ts);
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (
+    d.getFullYear() === yesterday.getFullYear() &&
+    d.getMonth() === yesterday.getMonth() &&
+    d.getDate() === yesterday.getDate()
+  ) {
+    return "Yesterday";
   }
-  if (state === "delivered") {
-    return <span className="ml-1 text-[11px] text-[var(--lop-muted)]">✓✓</span>;
-  }
-  return <span className="ml-1 text-[11px] text-[var(--lop-muted)]">✓</span>;
+  return d.toLocaleDateString([], { weekday: "short" });
 }
 
-function initials(name: string): string {
-  return name
+function Tick({ state }: { state: DeliveryState }) {
+  if (state === "read") {
+    return <CheckCheck size={14} className="text-[var(--lop-read)]" />;
+  }
+  if (state === "delivered") {
+    return <CheckCheck size={14} className="text-[var(--lop-muted)]" />;
+  }
+  return <Check size={14} className="text-[var(--lop-muted)]" />;
+}
+
+function Avatar({ name, size = 40 }: { name: string; size?: number }) {
+  const initials = name
     .split(" ")
     .map((p) => p[0])
     .join("")
     .slice(0, 2)
     .toUpperCase();
+  return (
+    <div
+      className="lop-avatar flex shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white"
+      style={{ width: size, height: size }}
+    >
+      {initials || "?"}
+    </div>
+  );
 }
 
 export function ChatShell() {
@@ -89,9 +145,10 @@ export function ChatShell() {
   const [infoMsg, setInfoMsg] = useState<DecryptedMessage | null>(null);
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
   const [peerTyping, setPeerTyping] = useState(false);
+  const [mobileShowChat, setMobileShowChat] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const typingTimer = useRef<number | null>(null);
   const peerTypingClear = useRef<number | null>(null);
 
@@ -109,15 +166,11 @@ export function ChatShell() {
     },
   });
 
-  // Soft-lock when tab is hidden for a while (ephemeral-browser pattern)
   useEffect(() => {
     let hideTimer: number | null = null;
     const onVis = () => {
-      if (document.hidden) {
-        hideTimer = window.setTimeout(softLock, 60_000);
-      } else if (hideTimer) {
-        window.clearTimeout(hideTimer);
-      }
+      if (document.hidden) hideTimer = window.setTimeout(softLock, 60_000);
+      else if (hideTimer) window.clearTimeout(hideTimer);
     };
     document.addEventListener("visibilitychange", onVis);
     return () => {
@@ -153,8 +206,7 @@ export function ChatShell() {
 
   const loadMessages = useCallback(
     async (conversation: ConversationRow) => {
-      if (!conversation.peer || !session) return;
-      if (!hasVaultKeys()) return;
+      if (!conversation.peer || !session || !hasVaultKeys()) return;
       const res = await api.get<{
         messages: Array<{
           id: string;
@@ -227,10 +279,8 @@ export function ChatShell() {
     const evt = data as {
       type?: string;
       conversationId?: string;
-      messageId?: string;
-      displayName?: string;
     };
-    if (evt.type === "conversation.refresh") {
+    if (evt.type === "conversation.refresh" || evt.type === "message.new") {
       void refreshConversations().catch(() => undefined);
     }
     if (
@@ -243,13 +293,13 @@ export function ChatShell() {
     ) {
       void loadMessages(active).catch(() => undefined);
     }
-    if (evt.type === "message.new") {
-      void refreshConversations().catch(() => undefined);
-    }
     if (evt.type === "typing.start" && active && evt.conversationId === active.id) {
       setPeerTyping(true);
       if (peerTypingClear.current) window.clearTimeout(peerTypingClear.current);
-      peerTypingClear.current = window.setTimeout(() => setPeerTyping(false), 1500);
+      peerTypingClear.current = window.setTimeout(
+        () => setPeerTyping(false),
+        1500,
+      );
     }
     if (evt.type === "typing.stop" && active && evt.conversationId === active.id) {
       setPeerTyping(false);
@@ -273,6 +323,13 @@ export function ChatShell() {
     window.addEventListener("click", close);
     return () => window.removeEventListener("click", close);
   }, []);
+
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+  }, [draft]);
 
   function emitTyping() {
     if (!activeId) return;
@@ -304,20 +361,19 @@ export function ChatShell() {
     setBusy(true);
     try {
       if (!hasVaultKeys()) {
-        throw new Error("Vault is locked. Refresh and unlock with your passcode.");
+        throw new Error("Vault is locked. Unlock with your passcode.");
       }
       const username = lookup.replace(/^@/, "").toLowerCase().trim();
-      const user = await api.get<{
-        userId: string;
-        username: string;
-        displayName: string;
-      }>(`/users/lookup?username=${encodeURIComponent(username)}`);
+      const user = await api.get<{ userId: string }>(
+        `/users/lookup?username=${encodeURIComponent(username)}`,
+      );
       await api.post("/contacts", { contactUserId: user.userId });
       const conv = await api.post<{ conversationId: string }>("/conversations", {
         peerUserId: user.userId,
       });
       await refreshConversations();
       setActiveId(conv.conversationId);
+      setMobileShowChat(true);
       setLookup("");
     } catch (err) {
       setLookupError(err instanceof Error ? err.message : "Not found");
@@ -328,10 +384,8 @@ export function ChatShell() {
 
   async function sendPayload(payload: ChatPayload) {
     if (!active?.peer || !session) return;
-    let deviceId = getDeviceId();
-    if (!deviceId) {
-      throw new Error("Device keys missing. Unlock your vault passcode again.");
-    }
+    const deviceId = getDeviceId();
+    if (!deviceId) throw new Error("Device keys missing. Unlock again.");
     const envelope = await encryptOutgoing(
       active.peer.userId,
       encodePayload(payload),
@@ -361,7 +415,7 @@ export function ChatShell() {
     const text = draft.trim();
     setDraft("");
     try {
-      const payload: ChatPayload = {
+      await sendPayload({
         kind: "text",
         body: text,
         edited: Boolean(editing),
@@ -377,8 +431,7 @@ export function ChatShell() {
                 : (active?.peer?.displayName ?? "User"),
             }
           : undefined,
-      };
-      await sendPayload(payload);
+      });
     } catch (err) {
       setLookupError(err instanceof Error ? err.message : "Send failed");
       setDraft(text);
@@ -391,9 +444,10 @@ export function ChatShell() {
     setLookupError(null);
     try {
       const encrypted = await encryptFile(file);
-      const token = await api.post<{
-        attachmentId: string;
-      }>("/attachments/upload-token", { size: encrypted.ciphertext.byteLength });
+      const token = await api.post<{ attachmentId: string }>(
+        "/attachments/upload-token",
+        { size: encrypted.ciphertext.byteLength },
+      );
       await api.putBinary(
         `/attachments/${token.attachmentId}/data`,
         encrypted.ciphertext,
@@ -429,7 +483,10 @@ export function ChatShell() {
     URL.revokeObjectURL(url);
   }
 
-  async function deleteMessage(message: DecryptedMessage, scope: "me" | "everyone") {
+  async function deleteMessage(
+    message: DecryptedMessage,
+    scope: "me" | "everyone",
+  ) {
     setMenu(null);
     if (scope === "me") {
       setHiddenIds((prev) => new Set(prev).add(message.id));
@@ -439,59 +496,80 @@ export function ChatShell() {
     if (active) await loadMessages(active);
   }
 
-  function previewText(c: ConversationRow): string {
-    return `Chat with @${c.peer?.username ?? "user"}`;
-  }
-
   return (
     <div className="flex h-full min-h-0 overflow-hidden bg-[var(--lop-bg)]">
-      {/* Left nav rail */}
-      <nav className="hidden w-[60px] flex-col items-center justify-between border-r border-[var(--lop-border)] bg-[#1b2429] py-3 md:flex">
-        <div className="flex flex-col items-center gap-4 text-[var(--lop-muted)]">
-          <div className="relative rounded-lg bg-[#2a3942] p-2 text-[var(--lop-accent)]">
-            <span className="absolute -left-1 top-1 h-6 w-1 rounded bg-[var(--lop-accent)]" />
-            💬
+      {/* Messaging-only rail */}
+      <nav className="hidden w-[72px] flex-col items-center justify-between border-r border-[var(--lop-border)] bg-[var(--lop-rail)] py-4 md:flex">
+        <div className="flex flex-col items-center gap-3">
+          <div className="relative flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--lop-panel-3)] text-[var(--lop-accent)]">
+            <span className="absolute -left-2 top-2 h-7 w-1 rounded-full bg-[var(--lop-accent)]" />
+            <MessageCircle size={22} />
           </div>
-          <span title="Calls">📞</span>
-          <span title="Status">◐</span>
         </div>
-        <div className="flex flex-col items-center gap-4 text-[var(--lop-muted)]">
-          <button type="button" onClick={() => void logout()} title="Log out">
-            ⚙
+        <div className="flex flex-col items-center gap-4">
+          <button
+            type="button"
+            onClick={() => void logout()}
+            className="rounded-lg p-2 text-[var(--lop-muted)] hover:bg-[var(--lop-panel-2)] hover:text-[var(--lop-text)]"
+            title="Log out"
+          >
+            <LogOut size={20} />
           </button>
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--lop-accent)] text-xs font-bold text-[#111]">
-            {initials(session?.displayName ?? "?")}
-          </div>
+          <button
+            type="button"
+            className="rounded-lg p-2 text-[var(--lop-muted)] hover:bg-[var(--lop-panel-2)]"
+            title="Settings"
+          >
+            <Settings size={20} />
+          </button>
+          <Avatar name={session?.displayName ?? "?"} size={34} />
         </div>
       </nav>
 
       {/* Chat list */}
-      <aside className="flex w-full max-w-[380px] flex-col border-r border-[var(--lop-border)] bg-[var(--lop-panel)] md:w-[32%]">
-        <header className="flex items-center justify-between px-4 py-3">
-          <h1 className="text-xl font-semibold">Chats</h1>
-          <div className="text-[var(--lop-accent)]">＋</div>
+      <aside
+        className={`flex w-full max-w-full flex-col border-r border-[var(--lop-border)] bg-[var(--lop-panel)] md:w-[360px] ${
+          mobileShowChat ? "hidden md:flex" : "flex"
+        }`}
+      >
+        <header className="flex items-center justify-between px-4 pb-2 pt-4">
+          <div>
+            <h1 className="text-[22px] font-semibold tracking-tight">Chats</h1>
+            <p className="text-xs text-[var(--lop-muted)]">@{session?.username}</p>
+          </div>
+          <button
+            type="button"
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--lop-accent)] text-[#0b141a] shadow"
+            title="New chat"
+            onClick={() => inputRef.current?.blur()}
+          >
+            <Plus size={20} />
+          </button>
         </header>
 
-        <form onSubmit={onLookup} className="px-3 pb-2">
-          <input
-            className="w-full rounded-lg bg-[var(--lop-panel-2)] px-3 py-2 text-sm outline-none placeholder:text-[var(--lop-muted)]"
-            placeholder="Search or start a new chat"
-            value={lookup}
-            onChange={(e) => setLookup(e.target.value)}
-            disabled={busy}
-          />
+        <form onSubmit={onLookup} className="px-3 pb-3">
+          <div className="flex items-center gap-2 rounded-lg bg-[var(--lop-panel-2)] px-3 py-2.5">
+            <Search size={16} className="text-[var(--lop-muted)]" />
+            <input
+              className="w-full bg-transparent text-sm outline-none placeholder:text-[var(--lop-muted)]"
+              placeholder="Search or start a new chat"
+              value={lookup}
+              onChange={(e) => setLookup(e.target.value)}
+              disabled={busy}
+            />
+          </div>
           {lookupError && (
-            <p className="mt-2 text-xs text-red-400">{lookupError}</p>
+            <p className="mt-2 text-xs text-[var(--lop-danger)]">{lookupError}</p>
           )}
         </form>
 
-        <div className="flex gap-2 overflow-x-auto px-3 pb-2">
+        <div className="flex gap-2 overflow-x-auto px-3 pb-3">
           {["All", "Unread", "Favourites"].map((f, i) => (
             <span
               key={f}
-              className={`rounded-full px-3 py-1 text-xs ${
+              className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium ${
                 i === 0
-                  ? "bg-[var(--lop-accent)] text-[#111]"
+                  ? "bg-[var(--lop-accent)] text-[#0b141a]"
                   : "bg-[var(--lop-panel-2)] text-[var(--lop-muted)]"
               }`}
             >
@@ -502,10 +580,13 @@ export function ChatShell() {
 
         <div className="flex-1 overflow-y-auto">
           {conversations.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-[var(--lop-muted)]">
-              <p className="text-base text-[var(--lop-text)]">No conversations</p>
-              <p className="text-sm">
-                Search by exact @username to start a chat.
+            <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[var(--lop-panel-2)] text-[var(--lop-accent)]">
+                <UserPlus size={24} />
+              </div>
+              <p className="font-medium">No conversations yet</p>
+              <p className="max-w-[220px] text-sm text-[var(--lop-muted)]">
+                Find someone by exact @username and start messaging.
               </p>
             </div>
           ) : (
@@ -513,25 +594,26 @@ export function ChatShell() {
               <button
                 key={c.id}
                 type="button"
-                onClick={() => setActiveId(c.id)}
-                className={`flex w-full items-center gap-3 border-b border-[var(--lop-border)] px-3 py-3 text-left hover:bg-[var(--lop-panel-2)] ${
+                onClick={() => {
+                  setActiveId(c.id);
+                  setMobileShowChat(true);
+                }}
+                className={`flex w-full items-center gap-3 px-3 py-3 text-left transition hover:bg-[var(--lop-panel-2)] ${
                   activeId === c.id ? "bg-[var(--lop-panel-2)]" : ""
                 }`}
               >
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#6b7c85] text-sm font-semibold">
-                  {initials(c.peer?.displayName ?? "?")}
-                </div>
-                <div className="min-w-0 flex-1">
+                <Avatar name={c.peer?.displayName ?? "?"} size={48} />
+                <div className="min-w-0 flex-1 border-b border-[var(--lop-border)] pb-3">
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate font-medium">
                       {c.peer?.displayName ?? "Unknown"}
                     </span>
-                    <span className="text-[11px] text-[var(--lop-muted)]">
-                      {formatClock(c.createdAt)}
+                    <span className="shrink-0 text-[11px] text-[var(--lop-muted)]">
+                      {formatListTime(c.createdAt)}
                     </span>
                   </div>
                   <div className="truncate text-sm text-[var(--lop-muted)]">
-                    {previewText(c)}
+                    @{c.peer?.username}
                   </div>
                 </div>
               </button>
@@ -540,54 +622,84 @@ export function ChatShell() {
         </div>
       </aside>
 
-      {/* Main pane */}
-      <main className="relative hidden min-w-0 flex-1 flex-col md:flex">
+      {/* Conversation pane */}
+      <main
+        className={`relative min-w-0 flex-1 flex-col ${
+          mobileShowChat ? "flex" : "hidden md:flex"
+        }`}
+      >
         {!active ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-8 bg-[#0b141a] text-[var(--lop-muted)]">
-            <div className="text-4xl font-light text-[var(--lop-text)]">Lop</div>
-            <div className="flex gap-10 text-center text-sm">
-              <div>
-                <div className="mx-auto mb-2 flex h-14 w-14 items-center justify-center rounded-full bg-[var(--lop-panel-2)] text-2xl">
-                  📄
+          <div className="lop-chat-bg flex flex-1 flex-col items-center justify-center gap-6 px-6 text-center">
+            <div className="flex h-20 w-20 items-center justify-center rounded-full border border-[var(--lop-border)] bg-[var(--lop-panel)] text-[var(--lop-accent)] shadow-lg">
+              <MessageCircle size={36} />
+            </div>
+            <div>
+              <h2 className="text-3xl font-light tracking-tight">Lop</h2>
+              <p className="mt-2 max-w-sm text-sm text-[var(--lop-muted)]">
+                Private messaging. Messages disappear after 24 hours.
+              </p>
+            </div>
+            <div className="flex gap-8 text-sm text-[var(--lop-muted)]">
+              <div className="flex flex-col items-center gap-2">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--lop-panel-2)]">
+                  <FileText size={20} />
                 </div>
-                Send document
+                Send files
               </div>
-              <div>
-                <div className="mx-auto mb-2 flex h-14 w-14 items-center justify-center rounded-full bg-[var(--lop-panel-2)] text-2xl">
-                  👤
+              <div className="flex flex-col items-center gap-2">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--lop-panel-2)]">
+                  <UserPlus size={20} />
                 </div>
-                Add contact
+                Add by @username
               </div>
             </div>
-            <p className="max-w-sm text-center text-sm">
-              Private messaging. Messages disappear after 24 hours.
-            </p>
           </div>
         ) : (
           <>
-            <header className="flex items-center justify-between border-b border-[var(--lop-border)] bg-[var(--lop-panel)] px-4 py-2.5">
+            <header className="flex items-center justify-between border-b border-[var(--lop-border)] bg-[var(--lop-panel)] px-3 py-2.5 md:px-4">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#6b7c85] text-sm font-semibold">
-                  {initials(active.peer?.displayName ?? "?")}
-                </div>
+                <button
+                  type="button"
+                  className="rounded-lg p-1 text-[var(--lop-muted)] md:hidden"
+                  onClick={() => setMobileShowChat(false)}
+                >
+                  ←
+                </button>
+                <Avatar name={active.peer?.displayName ?? "?"} size={40} />
                 <div>
-                  <div className="font-medium">{active.peer?.displayName}</div>
+                  <div className="font-medium leading-tight">
+                    {active.peer?.displayName}
+                  </div>
                   <div className="text-xs text-[var(--lop-muted)]">
-                    {peerTyping
-                      ? "typing…"
-                      : `@${active.peer?.username}`}
+                    {peerTyping ? (
+                      <span className="text-[var(--lop-accent)]">typing…</span>
+                    ) : (
+                      `@${active.peer?.username}`
+                    )}
                   </div>
                 </div>
               </div>
-              <div className="flex gap-4 text-[var(--lop-muted)]">
-                <span title="Search">🔎</span>
-                <span title="Menu">⋮</span>
+              <div className="flex items-center gap-1 text-[var(--lop-muted)]">
+                <button
+                  type="button"
+                  className="rounded-lg p-2 hover:bg-[var(--lop-panel-2)]"
+                  title="Search in chat"
+                >
+                  <Search size={18} />
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg p-2 hover:bg-[var(--lop-panel-2)]"
+                  title="More"
+                >
+                  <MoreVertical size={18} />
+                </button>
               </div>
             </header>
 
             <div
               ref={listRef}
-              className="flex flex-1 flex-col gap-1 overflow-y-auto bg-[#0b141a] bg-[radial-gradient(circle_at_1px_1px,rgba(255,255,255,0.03)_1px,transparent_0)] bg-[length:24px_24px] p-4"
+              className="lop-chat-bg flex flex-1 flex-col gap-1.5 overflow-y-auto px-3 py-4 md:px-8"
             >
               {visibleMessages.map((m) => (
                 <div
@@ -596,50 +708,62 @@ export function ChatShell() {
                     e.preventDefault();
                     setMenu({ x: e.clientX, y: e.clientY, message: m });
                   }}
-                  className={`max-w-[65%] rounded-lg px-2.5 py-1.5 text-sm shadow ${
-                    m.mine
-                      ? "ml-auto rounded-tr-none bg-[var(--lop-outgoing)]"
-                      : "rounded-tl-none bg-[var(--lop-incoming)]"
+                  className={`max-w-[85%] px-1 sm:max-w-[65%] ${
+                    m.mine ? "ml-auto" : ""
                   }`}
                 >
-                  {m.payload.replyTo && (
-                    <div className="mb-1 rounded border-l-2 border-[var(--lop-accent)] bg-black/20 px-2 py-1 text-xs text-[var(--lop-muted)]">
-                      <div className="font-medium text-[var(--lop-accent)]">
-                        {m.payload.replyTo.senderName}
+                  <div
+                    className={`px-3 py-2 text-[14.5px] leading-snug shadow-sm ${
+                      m.mine ? "lop-bubble-out" : "lop-bubble-in"
+                    }`}
+                  >
+                    {m.payload.replyTo && (
+                      <div className="mb-1.5 rounded-md border-l-[3px] border-[var(--lop-accent)] bg-black/20 px-2 py-1.5 text-xs">
+                        <div className="font-semibold text-[var(--lop-accent)]">
+                          {m.payload.replyTo.senderName}
+                        </div>
+                        <div className="truncate text-[var(--lop-muted)]">
+                          {m.payload.replyTo.body}
+                        </div>
                       </div>
-                      <div className="truncate">{m.payload.replyTo.body}</div>
+                    )}
+                    {m.payload.kind === "text" ? (
+                      <div className="whitespace-pre-wrap break-words">
+                        {m.payload.body}
+                        {m.payload.edited ? (
+                          <span className="ml-1 text-[10px] italic text-[var(--lop-muted)]">
+                            edited
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="flex items-center gap-2 rounded-lg bg-black/15 px-2 py-2 text-left hover:bg-black/25"
+                        onClick={() => void downloadAttachment(m.payload)}
+                      >
+                        <FileText size={18} />
+                        <span className="underline">{m.payload.name}</span>
+                      </button>
+                    )}
+                    <div className="mt-1 flex items-center justify-end gap-1 text-[11px] text-[var(--lop-muted)]">
+                      <span>{formatClock(m.createdAt)}</span>
+                      {m.mine ? <Tick state={m.deliveryState} /> : null}
                     </div>
-                  )}
-                  {m.payload.kind === "text" ? (
-                    <div className="whitespace-pre-wrap break-words">
-                      {m.payload.body}
-                      {m.payload.edited ? (
-                        <span className="ml-1 text-[10px] text-[var(--lop-muted)]">
-                          edited
-                        </span>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      className="underline"
-                      onClick={() => void downloadAttachment(m.payload)}
-                    >
-                      📎 {m.payload.name}
-                    </button>
-                  )}
-                  <div className="mt-0.5 flex items-center justify-end gap-1 text-[10px] text-[var(--lop-muted)]">
-                    <span>{formatClock(m.createdAt)}</span>
-                    {m.mine ? <Tick state={m.deliveryState} /> : null}
                   </div>
                 </div>
               ))}
+
               {peerTyping && (
-                <div className="flex items-center gap-2 px-1 py-1 text-xs text-[var(--lop-muted)]">
+                <div className="flex items-center gap-2 px-2 py-1 text-xs text-[var(--lop-muted)]">
                   <span className="inline-flex gap-1">
-                    <i className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--lop-accent)] [animation-delay:0ms]" />
-                    <i className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--lop-accent)] [animation-delay:150ms]" />
-                    <i className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--lop-accent)] [animation-delay:300ms]" />
+                    {[0, 1, 2].map((i) => (
+                      <i
+                        key={i}
+                        className="lop-typing-dot inline-block h-1.5 w-1.5 rounded-full bg-[var(--lop-accent)]"
+                        style={{ animationDelay: `${i * 0.15}s` }}
+                      />
+                    ))}
                   </span>
                   {active.peer?.displayName} is typing
                 </div>
@@ -647,12 +771,12 @@ export function ChatShell() {
             </div>
 
             {(replyTo || editing) && (
-              <div className="flex items-center justify-between border-t border-[var(--lop-border)] bg-[var(--lop-panel-2)] px-4 py-2 text-sm">
-                <div>
-                  <div className="text-[var(--lop-accent)]">
-                    {editing ? "Editing" : "Replying"}
+              <div className="flex items-center justify-between border-t border-[var(--lop-border)] bg-[var(--lop-panel-2)] px-4 py-2">
+                <div className="min-w-0 border-l-[3px] border-[var(--lop-accent)] pl-3">
+                  <div className="text-xs font-semibold text-[var(--lop-accent)]">
+                    {editing ? "Editing message" : "Replying"}
                   </div>
-                  <div className="truncate text-[var(--lop-muted)]">
+                  <div className="truncate text-sm text-[var(--lop-muted)]">
                     {editing
                       ? editing.payload.kind === "text"
                         ? editing.payload.body
@@ -664,19 +788,20 @@ export function ChatShell() {
                 </div>
                 <button
                   type="button"
+                  className="rounded-lg p-2 text-[var(--lop-muted)] hover:bg-[var(--lop-panel)]"
                   onClick={() => {
                     setReplyTo(null);
                     setEditing(null);
                   }}
                 >
-                  ✕
+                  <X size={16} />
                 </button>
               </div>
             )}
 
             <form
               onSubmit={sendMessage}
-              className="flex items-center gap-2 border-t border-[var(--lop-border)] bg-[var(--lop-panel)] p-3"
+              className="flex items-end gap-2 border-t border-[var(--lop-border)] bg-[var(--lop-panel)] p-3"
             >
               <input
                 ref={fileRef}
@@ -687,26 +812,36 @@ export function ChatShell() {
               <button
                 type="button"
                 onClick={() => fileRef.current?.click()}
-                className="px-2 text-xl text-[var(--lop-muted)]"
+                className="mb-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--lop-border)] bg-[var(--lop-panel-2)] text-[var(--lop-muted)] hover:text-[var(--lop-text)]"
                 disabled={busy}
+                title="Attach file"
               >
-                ＋
+                <Paperclip size={18} />
               </button>
-              <input
+              <textarea
                 ref={inputRef}
-                className="flex-1 rounded-lg bg-[var(--lop-panel-2)] px-3 py-2.5 outline-none"
+                rows={1}
+                className="max-h-[120px] min-h-[42px] flex-1 resize-none rounded-xl bg-[var(--lop-input)] px-4 py-2.5 text-sm outline-none placeholder:text-[var(--lop-muted)]"
                 placeholder="Type a message"
                 value={draft}
                 onChange={(e) => {
                   setDraft(e.target.value);
                   emitTyping();
                 }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void sendMessage(e as unknown as FormEvent);
+                  }
+                }}
               />
               <button
                 type="submit"
-                className="rounded-full bg-[var(--lop-accent)] px-4 py-2 font-medium text-[#111]"
+                className="mb-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--lop-accent)] text-[#0b141a] shadow hover:bg-[var(--lop-accent-hover)] disabled:opacity-50"
+                disabled={!draft.trim()}
+                title="Send"
               >
-                Send
+                <Send size={18} />
               </button>
             </form>
           </>
@@ -715,11 +850,12 @@ export function ChatShell() {
 
       {menu && (
         <div
-          className="fixed z-50 min-w-[180px] rounded-lg bg-[#233138] py-1 text-sm shadow-xl"
+          className="fixed z-50 min-w-[200px] overflow-hidden rounded-2xl border border-[var(--lop-border)] bg-[var(--lop-panel-2)] py-1 text-sm shadow-2xl"
           style={{ left: menu.x, top: menu.y }}
           onClick={(e) => e.stopPropagation()}
         >
-          <MenuItem
+          <MenuRow
+            icon={<Reply size={16} />}
             label="Reply"
             onClick={() => {
               setReplyTo(menu.message);
@@ -728,7 +864,8 @@ export function ChatShell() {
               window.setTimeout(() => inputRef.current?.focus(), 0);
             }}
           />
-          <MenuItem
+          <MenuRow
+            icon={<Copy size={16} />}
             label="Copy"
             onClick={() => {
               const t =
@@ -740,7 +877,8 @@ export function ChatShell() {
             }}
           />
           {menu.message.mine && menu.message.payload.kind === "text" && (
-            <MenuItem
+            <MenuRow
+              icon={<Pencil size={16} />}
               label="Edit"
               onClick={() => {
                 setEditing(menu.message);
@@ -750,30 +888,34 @@ export function ChatShell() {
               }}
             />
           )}
-          <MenuItem
+          <MenuRow
+            icon={<Forward size={16} />}
             label="Forward"
             onClick={() => {
-              setLookupError("Pick a chat from search, then paste forwarded text.");
               if (menu.message.payload.kind === "text") {
                 setDraft(`Fwd: ${menu.message.payload.body}`);
               }
               setMenu(null);
             }}
           />
-          <MenuItem
+          <MenuRow
+            icon={<Info size={16} />}
             label="Message info"
             onClick={() => {
               setInfoMsg(menu.message);
               setMenu(null);
             }}
           />
-          <MenuItem
+          <div className="my-1 h-px bg-[var(--lop-border)]" />
+          <MenuRow
+            icon={<Trash2 size={16} />}
             label="Delete for me"
             danger
             onClick={() => void deleteMessage(menu.message, "me")}
           />
           {menu.message.mine && (
-            <MenuItem
+            <MenuRow
+              icon={<Trash2 size={16} />}
               label="Delete for everyone"
               danger
               onClick={() => void deleteMessage(menu.message, "everyone")}
@@ -783,30 +925,42 @@ export function ChatShell() {
       )}
 
       {infoMsg && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-sm rounded-xl bg-[var(--lop-panel)] p-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px]">
+          <div className="w-full max-w-sm rounded-2xl border border-[var(--lop-border)] bg-[var(--lop-panel)] p-5 shadow-2xl">
             <h2 className="text-lg font-semibold">Message info</h2>
-            <div className="mt-4 space-y-2 text-sm text-[var(--lop-muted)]">
-              <div>Sent: {new Date(infoMsg.createdAt).toLocaleString()}</div>
+            <div className="mt-4 space-y-3 text-sm text-[var(--lop-muted)]">
+              <div className="flex justify-between">
+                <span>Sent</span>
+                <span>{new Date(infoMsg.createdAt).toLocaleString()}</span>
+              </div>
               {infoMsg.mine && (
                 <>
-                  <div className="flex items-center gap-2">
-                    Delivered <Tick state="delivered" />
-                    {infoMsg.deliveryState !== "accepted" ? "yes" : "pending"}
+                  <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-2">
+                      Delivered <Tick state="delivered" />
+                    </span>
+                    <span>
+                      {infoMsg.deliveryState !== "accepted" ? "Yes" : "Pending"}
+                    </span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    Read <Tick state="read" />
-                    {infoMsg.deliveryState === "read" ? "yes" : "pending"}
+                  <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-2">
+                      Read <Tick state="read" />
+                    </span>
+                    <span>
+                      {infoMsg.deliveryState === "read" ? "Yes" : "Pending"}
+                    </span>
                   </div>
                 </>
               )}
-              <div>
-                Expires: {new Date(infoMsg.expiresAt).toLocaleString()}
+              <div className="flex justify-between">
+                <span>Expires</span>
+                <span>{new Date(infoMsg.expiresAt).toLocaleString()}</span>
               </div>
             </div>
             <button
               type="button"
-              className="mt-5 w-full rounded-lg bg-[var(--lop-accent)] py-2 font-medium text-[#111]"
+              className="mt-5 w-full rounded-xl bg-[var(--lop-accent)] py-2.5 font-semibold text-[#0b141a]"
               onClick={() => setInfoMsg(null)}
             >
               Close
@@ -818,11 +972,13 @@ export function ChatShell() {
   );
 }
 
-function MenuItem({
+function MenuRow({
+  icon,
   label,
   onClick,
   danger,
 }: {
+  icon: React.ReactNode;
   label: string;
   onClick: () => void;
   danger?: boolean;
@@ -830,12 +986,13 @@ function MenuItem({
   return (
     <button
       type="button"
-      className={`block w-full px-4 py-2.5 text-left hover:bg-[#182229] ${
-        danger ? "text-red-400" : ""
+      className={`flex w-full items-center justify-between gap-4 px-4 py-2.5 text-left hover:bg-[var(--lop-panel)] ${
+        danger ? "text-[var(--lop-danger)]" : ""
       }`}
       onClick={onClick}
     >
-      {label}
+      <span>{label}</span>
+      <span className="opacity-80">{icon}</span>
     </button>
   );
 }

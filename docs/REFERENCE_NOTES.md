@@ -23,6 +23,8 @@ GhostChat (`TempleEU/ghost.app`) was not reachable at clone time.
 - Context menu: reply, copy, edit, forward, delete
 - Chat list refresh when peer receives a message
 - 24h server TTL (mandatory), countdown only in message info
+- Messaging-only shell (no calls): chat rail, list, bubbles, composer
+- Polished dark chat layout with Inter + Lucide icons
 
 ## Not copied wholesale
 
