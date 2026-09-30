@@ -1,0 +1,22 @@
+{
+  "name": "lop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Lop — web-only end-to-end encrypted messenger",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "workers/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @lop/web",
+    "dev:api": "npm run dev -w @lop/api",
+    "build": "npm run build -w @lop/web && npm run build -w @lop/api",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "db:migrate:local": "npm run db:migrate:local -w @lop/api"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

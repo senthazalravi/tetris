@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+:root {
+  --lop-bg: #0b141a;
+  --lop-panel: #111b21;
+  --lop-panel-2: #202c33;
+  --lop-border: #2a3942;
+  --lop-accent: #00a884;
+  --lop-text: #e9edef;
+  --lop-muted: #8696a0;
+  --lop-outgoing: #005c4b;
+  --lop-incoming: #202c33;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: var(--lop-bg);
+  color: var(--lop-text);
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}

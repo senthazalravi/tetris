@@ -1,0 +1,21 @@
+name = "lop-api"
+main = "src/index.ts"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "lop-db"
+database_id = "local-lop-db"
+migrations_dir = "../../db/migrations"
+
+[[r2_buckets]]
+binding = "ATTACHMENTS"
+bucket_name = "lop-attachments"
+
+[vars]
+APP_ORIGIN = "http://localhost:5173"
+COOKIE_SECURE = "false"
+
+[dev]
+port = 8787
