@@ -1,21 +1,46 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Ban, Camera, Lock, LogOut, Monitor, Moon, Search, ShieldCheck, Sun, Trash2, UserMinus } from "lucide-react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import {
+  AtSign,
+  Ban,
+  Camera,
+  Check,
+  CheckCheck,
+  Clock,
+  Eraser,
+  Lock,
+  LogOut,
+  Monitor,
+  Moon,
+  Pencil,
+  Search,
+  Shuffle,
+  ShieldCheck,
+  Sun,
+  Timer,
+  UserMinus,
+  Send,
+} from "lucide-react";
 import { DISPLAY_NAME_MAX } from "@lop/config";
 import type { ConversationDto } from "@lop/types";
 import { api, ApiError } from "@/lib/api";
-import { makeAvatar } from "@/lib/media";
+import { formatFull, formatRemaining } from "@/lib/format";
+import { makeAvatar, svgToPng } from "@/lib/media";
 import {
+  clearChat,
   getSafetyNumber,
+  nameOf,
   openChatWith,
   removeContact,
   selectConversation,
   setBlocked,
+  setNickname,
   toast,
   useChat,
 } from "@/state/chat";
+import type { LocalMessage } from "@/state/localdb";
 import { useSession } from "@/state/session";
 import { useTheme, type ThemeChoice } from "@/state/theme";
-import { Avatar, Button, Field, Modal } from "@/ui/kit";
+import { Avatar, Button, Field, Modal, SQUIGGLE_PRESETS, squiggleUrl } from "@/ui/kit";
 
 /* ------------------------------------------------------------------ */
 /* new chat                                                            */
@@ -31,6 +56,7 @@ interface Found {
 
 export function NewChat({ onClose }: { onClose: () => void }) {
   const contacts = useChat((s) => s.contacts);
+  const nicknames = useChat((s) => s.nicknames);
   const [q, setQ] = useState("");
   const [found, setFound] = useState<Found | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -115,7 +141,7 @@ export function NewChat({ onClose }: { onClose: () => void }) {
                 >
                   <Avatar name={c.displayName} seed={c.userId} url={c.avatarUrl} size={38} />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">{c.displayName}</span>
+                    <span className="block truncate text-sm font-medium">{nameOf(nicknames, c)}</span>
                     <span className="block truncate text-xs text-muted">@{c.username}</span>
                   </span>
                   {c.blocked && <Ban size={14} className="text-danger" />}
@@ -133,11 +159,55 @@ export function NewChat({ onClose }: { onClose: () => void }) {
 /* contact info                                                        */
 /* ------------------------------------------------------------------ */
 
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="mt-5">
+      <h3 className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">{title}</h3>
+      <div className="overflow-hidden rounded-2xl border border-line bg-s2">{children}</div>
+    </section>
+  );
+}
+
+function Row({
+  icon: Icon,
+  label,
+  hint,
+  onClick,
+  danger,
+  busy,
+}: {
+  icon: typeof Ban;
+  label: string;
+  hint?: string;
+  onClick: () => void;
+  danger?: boolean;
+  busy?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={busy}
+      className={`flex w-full items-center gap-3 border-b border-line px-4 py-3 text-left transition last:border-b-0 hover:bg-s3 disabled:opacity-60 ${
+        danger ? "text-danger" : ""
+      }`}
+    >
+      <Icon size={18} className="shrink-0" />
+      <span className="min-w-0 flex-1">
+        <span className="block text-[15px] font-medium">{label}</span>
+        {hint && <span className="block text-xs font-normal text-muted">{hint}</span>}
+      </span>
+    </button>
+  );
+}
+
 export function ContactInfo({ conv, onClose }: { conv: ConversationDto; onClose: () => void }) {
-  const [safety, setSafety] = useState<string | null | undefined>(undefined);
-  const [confirmRemove, setConfirmRemove] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const nicknames = useChat((s) => s.nicknames);
   const peer = conv.peer;
+  const nickname = nicknames[peer.userId] ?? "";
+  const [draft, setDraft] = useState(nickname);
+  const [safety, setSafety] = useState<string | null | undefined>(undefined);
+  const [confirm, setConfirm] = useState<"clear" | "remove" | null>(null);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -151,11 +221,17 @@ export function ContactInfo({ conv, onClose }: { conv: ConversationDto; onClose:
 
   const groups = safety ? (safety.replace(/\s+/g, "").match(/.{1,5}/g) ?? []) : [];
 
+  async function saveNickname(e: FormEvent) {
+    e.preventDefault();
+    await setNickname(peer.userId, draft);
+    toast(draft.trim() ? "Nickname saved" : "Nickname removed");
+  }
+
   async function block() {
     setBusy(true);
     try {
       await setBlocked(peer.userId, !conv.blocked);
-      toast(conv.blocked ? `Unblocked ${peer.displayName}` : `Blocked ${peer.displayName}`);
+      toast(conv.blocked ? `Unblocked ${nameOf(nicknames, peer)}` : `Blocked ${nameOf(nicknames, peer)}`);
     } catch {
       toast("That didn't work. Try again.");
     } finally {
@@ -177,61 +253,237 @@ export function ContactInfo({ conv, onClose }: { conv: ConversationDto; onClose:
 
   return (
     <Modal title="Contact info" onClose={onClose}>
-      <div className="flex flex-col items-center text-center">
-        <Avatar name={peer.displayName} seed={peer.userId} url={peer.avatarUrl} size={88} />
-        <h3 className="mt-3 font-display text-2xl font-bold">{peer.displayName}</h3>
-        <p className="text-muted">@{peer.username}</p>
+      <div className="relative -mx-5 -mt-5 mb-1 overflow-hidden px-5 pb-6 pt-8 text-center">
+        <div className="glow-lime pointer-events-none absolute inset-0 opacity-70" />
+        <div className="relative flex flex-col items-center">
+          <div className="rounded-full p-1 ring-2 ring-pop/60">
+            <Avatar name={peer.displayName} seed={peer.userId} url={peer.avatarUrl} size={96} />
+          </div>
+          <h3 className="mt-3 font-display text-2xl font-extrabold leading-tight">
+            {nameOf(nicknames, peer)}
+          </h3>
+          <p className="mt-0.5 flex items-center gap-1 text-muted">
+            <AtSign size={14} />
+            {peer.username}
+          </p>
+          {nickname && (
+            <p className="mt-1 text-xs text-faint">
+              Profile name: <span className="text-muted">{peer.displayName}</span>
+            </p>
+          )}
+          {conv.blocked && (
+            <span className="mt-2 rounded-full bg-danger/15 px-3 py-1 text-xs font-medium text-danger">
+              Blocked
+            </span>
+          )}
+        </div>
       </div>
 
-      <div className="mt-6 rounded-2xl bg-s2 p-4">
-        <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
-          <ShieldCheck size={16} className="text-pop" /> Safety number
-        </div>
-        {safety === undefined ? (
-          <p className="text-sm text-muted">Calculating…</p>
-        ) : safety ? (
-          <>
-            <div className="grid grid-cols-4 gap-x-3 gap-y-1.5 font-mono text-[15px] tabular">
-              {groups.map((g, i) => (
-                <span key={i}>{g}</span>
-              ))}
-            </div>
-            <p className="mt-3 text-xs leading-relaxed text-muted">
-              Compare this with {peer.displayName} in person or on a call. If it matches on both
-              screens, nobody is sitting in the middle of your chat.
+      <Section title="Nickname">
+        <form onSubmit={saveNickname} className="flex items-center gap-2 p-3">
+          <div className="relative flex-1">
+            <Pencil size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
+            <input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              maxLength={40}
+              placeholder={peer.displayName}
+              aria-label="Nickname"
+              className="h-11 w-full rounded-xl border border-line bg-s1 pl-10 pr-3 text-[15px] outline-none transition placeholder:text-faint focus:border-pop focus:ring-4 focus:ring-pop/15"
+            />
+          </div>
+          <Button type="submit" disabled={draft.trim() === nickname}>
+            Save
+          </Button>
+        </form>
+        <p className="px-4 pb-3 text-xs text-faint">
+          Only you see this. It's stored on this device and shown everywhere instead of their profile name.
+        </p>
+      </Section>
+
+      <Section title="Encryption">
+        <div className="p-4">
+          <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+            <ShieldCheck size={16} className="text-pop" /> Safety number
+          </div>
+          {safety === undefined ? (
+            <p className="text-sm text-muted">Calculating…</p>
+          ) : safety ? (
+            <>
+              <div className="grid grid-cols-4 gap-x-3 gap-y-2 rounded-xl bg-s1 p-3 font-mono text-[14px] tabular sm:text-[15px]">
+                {groups.map((g, i) => (
+                  <span key={i}>{g}</span>
+                ))}
+              </div>
+              <p className="mt-3 text-xs leading-relaxed text-muted">
+                Compare this with {nameOf(nicknames, peer)} in person or on a call. If it matches on both screens,
+                nobody is sitting in the middle of your chat.
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-muted">
+              Available once {nameOf(nicknames, peer)} has set up their vault on a device.
             </p>
+          )}
+          <p className="mt-3 flex items-center gap-2 text-xs text-faint">
+            <Timer size={13} /> Messages vanish 24 hours after they're sent.
+          </p>
+        </div>
+      </Section>
+
+      <Section title="Manage">
+        {confirm === "clear" ? (
+          <ConfirmRow
+            text="Remove every message in this chat from this device? Your contact keeps their own copy until it expires."
+            action="Clear chat"
+            onCancel={() => setConfirm(null)}
+            onConfirm={async () => {
+              await clearChat(conv.id);
+              toast("Chat cleared");
+              setConfirm(null);
+            }}
+          />
+        ) : (
+          <Row icon={Eraser} label="Clear chat" hint="Delete all messages here, on this device" onClick={() => setConfirm("clear")} />
+        )}
+        <Row
+          icon={Ban}
+          label={conv.blocked ? "Unblock" : "Block"}
+          hint={conv.blocked ? "Start receiving their messages again" : "They won't be able to reach you"}
+          onClick={() => void block()}
+          busy={busy}
+        />
+        {confirm === "remove" ? (
+          <ConfirmRow
+            text="Remove this contact? You'll stop seeing this chat. They can still message you unless blocked."
+            action="Remove"
+            onCancel={() => setConfirm(null)}
+            onConfirm={remove}
+          />
+        ) : (
+          <Row icon={UserMinus} label="Remove contact" danger onClick={() => setConfirm("remove")} />
+        )}
+      </Section>
+    </Modal>
+  );
+}
+
+function ConfirmRow({
+  text,
+  action,
+  onConfirm,
+  onCancel,
+}: {
+  text: string;
+  action: string;
+  onConfirm: () => void | Promise<void>;
+  onCancel: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="pop-in border-b border-line bg-danger/10 p-4 last:border-b-0">
+      <p className="mb-3 text-sm text-muted">{text}</p>
+      <div className="flex gap-2">
+        <Button
+          variant="danger"
+          size="sm"
+          busy={busy}
+          onClick={async () => {
+            setBusy(true);
+            await onConfirm();
+            setBusy(false);
+          }}
+        >
+          {action}
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* message info                                                        */
+/* ------------------------------------------------------------------ */
+
+function InfoRow({
+  icon,
+  label,
+  value,
+  dim,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  dim?: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-3 border-b border-line px-4 py-3 last:border-b-0">
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-s3">{icon}</span>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium">{label}</div>
+        <div className={`text-xs ${dim ? "text-faint" : "text-muted"}`}>{value}</div>
+      </div>
+    </div>
+  );
+}
+
+export function MessageInfo({ m, onClose }: { m: LocalMessage; onClose: () => void }) {
+  const out = m.direction === "out";
+  const c = m.content;
+  const preview =
+    c.kind === "text"
+      ? c.body
+      : c.kind === "file"
+        ? c.body || (c.attachment?.voice ? "Voice message" : c.attachment?.name) || "Attachment"
+        : c.kind === "poll"
+          ? `Poll: ${c.poll?.question ?? ""}`
+          : "";
+  const left = m.expiresAt - Date.now();
+
+  return (
+    <Modal title="Message info" onClose={onClose}>
+      {preview && (
+        <div className="mb-4 flex justify-end">
+          <div className={`bubble ${out ? "out" : "in"} line-clamp-4 !max-w-full`}>{preview}</div>
+        </div>
+      )}
+      <div className="overflow-hidden rounded-2xl border border-line bg-s2">
+        {out ? (
+          <>
+            <InfoRow
+              icon={<Send size={15} />}
+              label="Sent"
+              value={m.state === "failed" ? "Not sent" : m.state === "sending" ? "Sending…" : formatFull(m.createdAt)}
+              dim={m.state === "failed" || m.state === "sending"}
+            />
+            <InfoRow
+              icon={<CheckCheck size={16} />}
+              label="Delivered"
+              value={m.deliveredAt ? formatFull(m.deliveredAt) : m.state === "delivered" || m.state === "read" ? "Yes" : "Not yet"}
+              dim={!m.deliveredAt && m.state !== "delivered" && m.state !== "read"}
+            />
+            <InfoRow
+              icon={<CheckCheck size={16} className="text-[#2aa8e6]" strokeWidth={2.8} />}
+              label="Read"
+              value={m.readAt ? formatFull(m.readAt) : m.state === "read" ? "Yes" : "Not yet"}
+              dim={!m.readAt && m.state !== "read"}
+            />
           </>
         ) : (
-          <p className="text-sm text-muted">
-            Available once {peer.displayName} has set up their vault on a device.
-          </p>
+          <InfoRow icon={<Check size={16} />} label="Received" value={formatFull(m.createdAt)} />
         )}
+        <InfoRow
+          icon={<Clock size={15} />}
+          label="Vanishes"
+          value={`${formatFull(m.expiresAt)} · in ${formatRemaining(left)}`}
+        />
       </div>
-
-      <div className="mt-4 space-y-2">
-        <Button variant="soft" block onClick={() => void block()} busy={busy}>
-          <Ban size={16} /> {conv.blocked ? "Unblock" : "Block"} {peer.displayName}
-        </Button>
-        {confirmRemove ? (
-          <div className="pop-in rounded-2xl border border-danger/30 bg-danger/10 p-3 text-sm">
-            <p className="mb-3 text-muted">
-              Remove this contact? You'll stop seeing this chat. They can still message you unless blocked.
-            </p>
-            <div className="flex gap-2">
-              <Button variant="danger" size="sm" onClick={() => void remove()} busy={busy}>
-                <UserMinus size={15} /> Remove
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => setConfirmRemove(false)}>
-                Cancel
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <Button variant="danger" block onClick={() => setConfirmRemove(true)}>
-            <Trash2 size={16} /> Remove contact
-          </Button>
-        )}
-      </div>
+      <p className="mt-3 text-center text-xs text-faint">
+        Times come from the server clock. Both people's copies disappear 24 hours after sending.
+      </p>
     </Modal>
   );
 }
@@ -246,6 +498,10 @@ const THEMES: { id: ThemeChoice; label: string; icon: typeof Sun }[] = [
   { id: "light", label: "Light", icon: Sun },
 ];
 
+function randomSeed() {
+  return `sq-${crypto.randomUUID().slice(0, 8)}`;
+}
+
 export function Profile({ onClose }: { onClose: () => void }) {
   const { user, updateUser, logout } = useSession();
   const { choice, setChoice } = useTheme();
@@ -253,8 +509,11 @@ export function Profile({ onClose }: { onClose: () => void }) {
   const [saving, setSaving] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [seed, setSeed] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   if (!user) return null;
+
+  const shown = seed ? squiggleUrl(seed) : user.avatarUrl || squiggleUrl(user.id);
 
   async function save(e: FormEvent) {
     e.preventDefault();
@@ -272,14 +531,16 @@ export function Profile({ onClose }: { onClose: () => void }) {
     }
   }
 
-  async function photo(f: File | undefined) {
-    if (!f || !user) return;
+  async function upload(bytesPromise: Promise<Uint8Array>, keepSeed: string | null = null) {
+    if (!user) return;
     setPhotoBusy(true);
     setError(null);
     try {
-      const bytes = await makeAvatar(f);
+      const bytes = await bytesPromise;
       const res = await api.putBinary<{ avatarUrl: string }>("/users/me/avatar", bytes);
       updateUser({ ...user, avatarUrl: res.avatarUrl });
+      setSeed(keepSeed);
+      toast("Avatar updated");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't use that image");
     } finally {
@@ -287,28 +548,23 @@ export function Profile({ onClose }: { onClose: () => void }) {
     }
   }
 
-  async function removePhoto() {
-    if (!user) return;
-    setPhotoBusy(true);
-    try {
-      await api.del("/users/me/avatar");
-      updateUser({ ...user, avatarUrl: null });
-    } catch {
-      setError("Couldn't remove the photo");
-    } finally {
-      setPhotoBusy(false);
-    }
+  function pickSquiggle(next: string) {
+    if (photoBusy) return;
+    setSeed(next);
+    void upload(svgToPng(squiggleUrl(next)), next);
   }
 
   return (
     <Modal title="Your profile" onClose={onClose}>
       <div className="flex flex-col items-center">
         <div className="relative">
-          <Avatar name={user.displayName} seed={user.id} url={user.avatarUrl} size={96} />
+          <div className="rounded-full p-1 ring-2 ring-pop/60">
+            <img src={shown} alt="Your avatar" className="h-24 w-24 rounded-full bg-s3 object-cover" />
+          </div>
           <button
             onClick={() => fileRef.current?.click()}
             disabled={photoBusy}
-            aria-label="Change photo"
+            aria-label="Upload your own photo"
             className="absolute bottom-0 right-0 flex h-9 w-9 items-center justify-center rounded-full bg-accent text-onaccent shadow-lg transition hover:brightness-110 disabled:opacity-60"
           >
             <Camera size={17} />
@@ -319,18 +575,49 @@ export function Profile({ onClose }: { onClose: () => void }) {
             accept="image/png,image/jpeg,image/webp"
             hidden
             onChange={(e) => {
-              void photo(e.target.files?.[0]);
+              const f = e.target.files?.[0];
               e.target.value = "";
+              if (f) void upload(makeAvatar(f));
             }}
           />
         </div>
-        {user.avatarUrl && (
-          <button onClick={() => void removePhoto()} className="mt-2 text-xs text-muted underline hover:text-fg">
-            Remove photo
-          </button>
-        )}
         <p className="mt-3 text-muted">@{user.username}</p>
         <p className="text-xs text-faint">{user.email}</p>
+      </div>
+
+      <div className="mt-5 rounded-2xl border border-line bg-s2 p-3">
+        <div className="mb-2 flex items-center justify-between px-1">
+          <span className="text-[13px] font-medium text-muted">Pick an avatar</span>
+          <button
+            onClick={() => pickSquiggle(randomSeed())}
+            disabled={photoBusy}
+            className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium text-fg transition hover:bg-s3 disabled:opacity-60"
+            aria-label="Shuffle a new avatar"
+          >
+            <Shuffle size={13} /> Shuffle
+          </button>
+        </div>
+        <div className="grid grid-cols-4 gap-2 sm:grid-cols-8">
+          {SQUIGGLE_PRESETS.map((s) => (
+            <button
+              key={s}
+              onClick={() => pickSquiggle(s)}
+              disabled={photoBusy}
+              aria-label={`Avatar ${s}`}
+              aria-pressed={seed === s}
+              className={`overflow-hidden rounded-full transition hover:scale-105 disabled:opacity-60 ${
+                seed === s ? "ring-2 ring-pop ring-offset-2 ring-offset-s2" : ""
+              }`}
+            >
+              <img src={squiggleUrl(s)} alt="" className="aspect-square w-full bg-s3" draggable={false} />
+            </button>
+          ))}
+        </div>
+        <div className="mt-3">
+          <Button size="sm" variant="soft" onClick={() => fileRef.current?.click()} disabled={photoBusy}>
+            Upload a photo
+          </Button>
+        </div>
       </div>
 
       <form onSubmit={save} className="mt-5 flex items-end gap-2">
@@ -378,3 +665,4 @@ export function Profile({ onClose }: { onClose: () => void }) {
     </Modal>
   );
 }
+

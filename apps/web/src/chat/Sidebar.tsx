@@ -1,12 +1,35 @@
-import { useMemo, useState } from "react";
-import { Ban, Check, CheckCheck, MessageSquarePlus, Paperclip, Search, WifiOff } from "lucide-react";
+import { useCallback, useMemo, useState, type MouseEvent } from "react";
+import {
+  Ban,
+  Check,
+  CheckCheck,
+  Eraser,
+  Info,
+  MessageCircle,
+  MessageSquarePlus,
+  MoreHorizontal,
+  Paperclip,
+  Search,
+  UserMinus,
+  WifiOff,
+} from "lucide-react";
+import type { ConversationDto } from "@lop/types";
 import { formatListTime } from "@/lib/format";
-import { selectConversation, useChat } from "@/state/chat";
+import {
+  clearChat,
+  nameOf,
+  removeContact,
+  selectConversation,
+  setBlocked,
+  toast,
+  useChat,
+} from "@/state/chat";
 import { useSession } from "@/state/session";
 import type { LocalMessage } from "@/state/localdb";
 import { Avatar, IconButton, Wordmark } from "@/ui/kit";
 import { ThemeButton } from "@/ui/ThemeButton";
-import { useNow } from "@/ui/hooks";
+import { useNow, useOutside } from "@/ui/hooks";
+import { ContactInfo } from "./Modals";
 
 function previewOf(m: LocalMessage | undefined): string {
   if (!m) return "No messages yet";
@@ -14,14 +37,26 @@ function previewOf(m: LocalMessage | undefined): string {
   const c = m.content;
   if (c.kind === "system") return c.text;
   if (c.kind === "undecryptable") return "Couldn't decrypt";
-  if (c.kind === "file") return c.body || c.attachment?.name || "Attachment";
+  if (c.kind === "file") {
+    return c.body || (c.attachment?.voice ? "Voice message" : c.attachment?.name) || "Attachment";
+  }
+  if (c.kind === "poll") return `Poll: ${c.poll?.question ?? ""}`;
+  if (c.kind === "reaction" || c.kind === "vote") return "";
   return c.body;
+}
+
+interface MenuState {
+  conv: ConversationDto;
+  x: number;
+  y: number;
 }
 
 export function Sidebar({ onNew, onProfile }: { onNew: () => void; onProfile: () => void }) {
   const user = useSession((s) => s.user)!;
-  const { conversations, messages, activeId, typing, connection, ready } = useChat();
+  const { conversations, messages, activeId, typing, connection, ready, nicknames } = useChat();
   const [q, setQ] = useState("");
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const [infoFor, setInfoFor] = useState<string | null>(null);
   const now = useNow(30_000);
 
   const rows = useMemo(() => {
@@ -29,7 +64,7 @@ export function Sidebar({ onNew, onProfile }: { onNew: () => void; onProfile: ()
     return conversations
       .map((c) => {
         const list = messages[c.id] ?? [];
-        const last = [...list].reverse().find((m) => m.content.kind !== "system");
+        const last = [...list].reverse().find((m) => m.content.kind !== "system" && m.content.kind !== "reaction" && m.content.kind !== "vote");
         const unread = list.filter((m) => m.unread).length;
         return { c, last, unread, at: last?.createdAt ?? c.lastMessageAt };
       })
@@ -37,10 +72,15 @@ export function Sidebar({ onNew, onProfile }: { onNew: () => void; onProfile: ()
         ({ c }) =>
           !term ||
           c.peer.displayName.toLowerCase().includes(term) ||
+          (nicknames[c.peer.userId] ?? "").toLowerCase().includes(term) ||
           c.peer.username.toLowerCase().includes(term),
       )
       .sort((a, b) => b.at - a.at);
-  }, [conversations, messages, q]);
+  }, [conversations, messages, q, nicknames]);
+
+  const openMenuAt = (c: ConversationDto, x: number, y: number) => setMenu({ conv: c, x, y });
+  const closeMenu = useCallback(() => setMenu(null), []);
+  const infoConv = conversations.find((c) => c.id === infoFor) ?? null;
 
   return (
     <aside className="flex h-full w-full flex-col border-r border-line bg-s1 md:w-[22rem] lg:w-[24rem]">
@@ -117,8 +157,12 @@ export function Sidebar({ onNew, onProfile }: { onNew: () => void; onProfile: ()
               const active = c.id === activeId;
               const isTyping = (typing[c.id] ?? 0) > now - 6000;
               const mine = last?.direction === "out" && !last.deleted;
+              const onContext = (e: MouseEvent) => {
+                e.preventDefault();
+                openMenuAt(c, e.clientX, e.clientY);
+              };
               return (
-                <li key={c.id}>
+                <li key={c.id} className="group relative" onContextMenu={onContext}>
                   <button
                     onClick={() => selectConversation(c.id)}
                     aria-current={active ? "true" : undefined}
@@ -129,8 +173,12 @@ export function Sidebar({ onNew, onProfile }: { onNew: () => void; onProfile: ()
                     <Avatar name={c.peer.displayName} seed={c.peer.userId} url={c.peer.avatarUrl} size={48} />
                     <span className="min-w-0 flex-1">
                       <span className="flex items-baseline justify-between gap-2">
-                        <span className="truncate font-semibold">{c.peer.displayName}</span>
-                        <span className={`shrink-0 text-[11px] ${unread ? "font-semibold text-pop" : "text-faint"}`}>
+                        <span className="truncate font-semibold">{nameOf(nicknames, c.peer)}</span>
+                        <span
+                          className={`shrink-0 text-[11px] transition-opacity group-hover:opacity-0 ${
+                            unread ? "font-semibold text-pop" : "text-faint"
+                          }`}
+                        >
                           {at ? formatListTime(at) : ""}
                         </span>
                       </span>
@@ -142,11 +190,11 @@ export function Sidebar({ onNew, onProfile }: { onNew: () => void; onProfile: ()
                           <>
                             {mine &&
                               (last.state === "read" ? (
-                                <CheckCheck size={14} className="shrink-0 text-sky-500" />
+                                <CheckCheck size={15} strokeWidth={2.6} className="shrink-0 text-[#2aa8e6]" />
                               ) : last.state === "delivered" ? (
-                                <CheckCheck size={14} className="shrink-0" />
+                                <CheckCheck size={15} className="shrink-0" />
                               ) : (
-                                <Check size={14} className="shrink-0" />
+                                <Check size={15} className="shrink-0" />
                               ))}
                             {last?.content.kind === "file" && <Paperclip size={13} className="shrink-0" />}
                             <span className="truncate">{previewOf(last)}</span>
@@ -160,12 +208,185 @@ export function Sidebar({ onNew, onProfile }: { onNew: () => void; onProfile: ()
                       </span>
                     </span>
                   </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const r = e.currentTarget.getBoundingClientRect();
+                      openMenuAt(c, r.right - 8, r.bottom + 4);
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    aria-label={`Options for ${nameOf(nicknames, c.peer)}`}
+                    className="absolute right-3 top-2.5 flex h-7 w-7 items-center justify-center rounded-full text-muted opacity-0 transition hover:bg-s4 hover:text-fg focus:opacity-100 group-hover:opacity-100"
+                  >
+                    <MoreHorizontal size={17} />
+                  </button>
                 </li>
               );
             })}
           </ul>
         )}
       </nav>
+
+      {menu && (
+        <ChatMenu
+          state={menu}
+          nickname={nameOf(nicknames, menu.conv.peer)}
+          onClose={closeMenu}
+          onInfo={() => setInfoFor(menu.conv.id)}
+        />
+      )}
+      {infoConv && <ContactInfo conv={infoConv} onClose={() => setInfoFor(null)} />}
     </aside>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* context menu                                                        */
+/* ------------------------------------------------------------------ */
+
+function ChatMenu({
+  state,
+  nickname,
+  onClose,
+  onInfo,
+}: {
+  state: MenuState;
+  nickname: string;
+  onClose: () => void;
+  onInfo: () => void;
+}) {
+  const { conv } = state;
+  const [confirm, setConfirm] = useState<"clear" | "remove" | null>(null);
+  const ref = useOutside<HTMLDivElement>(true, onClose);
+
+  const width = 240;
+  const height = 300;
+  const left = Math.max(8, Math.min(state.x, window.innerWidth - width - 8));
+  const top = Math.max(8, Math.min(state.y, window.innerHeight - height - 8));
+
+  const run = async (fn: () => Promise<void> | void, message?: string) => {
+    try {
+      await fn();
+      if (message) toast(message);
+    } catch {
+      toast("That didn't work. Try again.");
+    }
+    onClose();
+  };
+
+  return (
+    <div
+      ref={ref}
+      role="menu"
+      style={{ left, top, width }}
+      className="pop-in fixed z-[65] overflow-hidden rounded-2xl border border-line bg-s1 p-1.5 shadow-[var(--shadow)]"
+    >
+      <div className="px-3 pb-1.5 pt-2 text-xs font-semibold uppercase tracking-wider text-faint">
+        <span className="line-clamp-1 normal-case tracking-normal text-muted">{nickname}</span>
+      </div>
+      <Item icon={MessageCircle} onClick={() => run(() => selectConversation(conv.id))}>
+        Open chat
+      </Item>
+      <Item
+        icon={Info}
+        onClick={() => {
+          onInfo();
+          onClose();
+        }}
+      >
+        Contact info &amp; nickname
+      </Item>
+      <div className="my-1 h-px bg-line" />
+      {confirm === "clear" ? (
+        <Confirm
+          label="Clear all messages on this device?"
+          action="Clear"
+          onCancel={() => setConfirm(null)}
+          onConfirm={() => run(() => clearChat(conv.id), "Chat cleared")}
+        />
+      ) : (
+        <Item icon={Eraser} onClick={() => setConfirm("clear")}>
+          Clear chat
+        </Item>
+      )}
+      <Item
+        icon={Ban}
+        onClick={() =>
+          run(() => setBlocked(conv.peer.userId, !conv.blocked), conv.blocked ? "Unblocked" : "Blocked")
+        }
+      >
+        {conv.blocked ? "Unblock" : "Block"}
+      </Item>
+      {confirm === "remove" ? (
+        <Confirm
+          label="Remove this contact and chat?"
+          action="Remove"
+          onCancel={() => setConfirm(null)}
+          onConfirm={() =>
+            run(async () => {
+              await removeContact(conv.peer.userId);
+              if (useChat.getState().activeId === conv.id) selectConversation(null);
+            }, "Contact removed")
+          }
+        />
+      ) : (
+        <Item icon={UserMinus} danger onClick={() => setConfirm("remove")}>
+          Remove contact
+        </Item>
+      )}
+    </div>
+  );
+}
+
+function Item({
+  icon: Icon,
+  children,
+  onClick,
+  danger,
+}: {
+  icon: typeof Ban;
+  children: React.ReactNode;
+  onClick: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      role="menuitem"
+      onClick={onClick}
+      className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition hover:bg-s3 ${
+        danger ? "text-danger" : ""
+      }`}
+    >
+      <Icon size={16} className="shrink-0" /> {children}
+    </button>
+  );
+}
+
+function Confirm({
+  label,
+  action,
+  onConfirm,
+  onCancel,
+}: {
+  label: string;
+  action: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="pop-in m-0.5 rounded-xl bg-danger/10 p-3">
+      <p className="mb-2 text-xs text-muted">{label}</p>
+      <div className="flex gap-2">
+        <button
+          onClick={onConfirm}
+          className="rounded-lg bg-danger px-3 py-1.5 text-xs font-semibold text-white hover:brightness-110"
+        >
+          {action}
+        </button>
+        <button onClick={onCancel} className="rounded-lg px-3 py-1.5 text-xs text-muted hover:bg-s3">
+          Cancel
+        </button>
+      </div>
+    </div>
   );
 }
