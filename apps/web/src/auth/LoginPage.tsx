@@ -1,6 +1,5 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { MessageCircle } from "lucide-react";
 import { api } from "@/api/client";
 import { useAuth } from "@/auth/AuthContext";
 import type { SessionUser } from "@lop/types";
@@ -34,59 +33,44 @@ export function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-full items-center justify-center bg-[var(--lop-bg)] px-4">
-      <form
-        onSubmit={onSubmit}
-        className="w-full max-w-md rounded-2xl border border-[var(--lop-border)] bg-[var(--lop-panel)] p-6 shadow-xl"
-      >
-        <div className="mb-5 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--lop-panel-2)] text-[var(--lop-accent)]">
-            <MessageCircle size={20} />
-          </div>
-          <div>
-            <h1 className="text-xl font-semibold">Log in</h1>
-            <p className="text-sm text-[var(--lop-muted)]">
-              Email or username, then vault passcode
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-3">
-          <label className="block text-sm">
-            <span className="text-[var(--lop-muted)]">Email or username</span>
+    <div className="flex min-h-full items-center justify-center bg-background px-4 text-text">
+      <div className="w-full max-w-md">
+        <h1 className="font-brand mb-2 text-4xl font-bold">Lop</h1>
+        <h2 className="mb-8 text-3xl font-bold">Login</h2>
+        <form onSubmit={onSubmit} className="flex flex-col gap-y-6">
+          <div className="flex flex-col gap-y-4">
             <input
-              className="mt-1 w-full rounded-xl border border-[var(--lop-border)] bg-[var(--lop-panel-2)] px-3 py-2.5 outline-none focus:border-[var(--lop-accent)]"
+              className="rounded bg-background p-3 text-text outline outline-1 outline-secondary-dark hover:outline-primary"
+              placeholder="Email or username"
               value={login}
               onChange={(e) => setLogin(e.target.value)}
               required
             />
-          </label>
-          <label className="block text-sm">
-            <span className="text-[var(--lop-muted)]">Password</span>
             <input
               type="password"
-              className="mt-1 w-full rounded-xl border border-[var(--lop-border)] bg-[var(--lop-panel-2)] px-3 py-2.5 outline-none focus:border-[var(--lop-accent)]"
+              className="rounded bg-background p-3 text-text outline outline-1 outline-secondary-dark hover:outline-primary"
+              placeholder="Password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
             />
-          </label>
-        </div>
-        {error && <p className="mt-3 text-sm text-[var(--lop-danger)]">{error}</p>}
-        <button
-          type="submit"
-          disabled={busy}
-          className="mt-6 w-full rounded-xl bg-[var(--lop-accent)] px-4 py-3 font-semibold text-[#0b141a] disabled:opacity-60"
-        >
-          {busy ? "Signing in…" : "Continue"}
-        </button>
-        <p className="mt-4 text-center text-sm text-[var(--lop-muted)]">
-          New here?{" "}
-          <Link className="text-[var(--lop-accent)]" to="/register">
-            Create account
-          </Link>
-        </p>
-      </form>
+          </div>
+          {error && <p className="text-sm text-danger">{error}</p>}
+          <button
+            type="submit"
+            disabled={busy}
+            className="flex w-full justify-center rounded bg-primary px-6 py-3 font-medium text-white shadow-lg disabled:bg-background"
+          >
+            {busy ? "Signing in…" : "Login"}
+          </button>
+          <p className="text-sm text-secondary-darker">
+            Create new account?{" "}
+            <Link className="text-primary" to="/register">
+              Signup
+            </Link>
+          </p>
+        </form>
+      </div>
     </div>
   );
 }

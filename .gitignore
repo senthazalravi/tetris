@@ -18,3 +18,4 @@ apps/web/dist/
 workers/api/dist/
 .vite/
 refs/
+docs/REFERENCE_NOTES.md

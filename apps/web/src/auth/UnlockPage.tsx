@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
-import { Shield } from "lucide-react";
+import { Lock } from "lucide-react";
 import { api } from "@/api/client";
 import { useAuth } from "@/auth/AuthContext";
 import { ensureDeviceReady, onWipeLocal, unlockVault } from "@/crypto/vaultCrypto";
@@ -33,7 +33,7 @@ export function UnlockPage() {
 
   if (bootState === "loading") {
     return (
-      <div className="flex min-h-full items-center justify-center text-[var(--lop-muted)]">
+      <div className="flex min-h-full items-center justify-center bg-background text-secondary-darker">
         Loading…
       </div>
     );
@@ -115,16 +115,16 @@ export function UnlockPage() {
   const seconds = Math.ceil(remainingMs / 1000);
 
   return (
-    <div className="flex min-h-full items-center justify-center bg-[var(--lop-bg)] px-4">
+    <div className="flex min-h-full items-center justify-center bg-background px-4 text-text">
       <form
         onSubmit={onSubmit}
-        className="w-full max-w-sm rounded-2xl border border-[var(--lop-border)] bg-[var(--lop-panel)] p-6 text-center shadow-xl"
+        className="w-full max-w-sm rounded-2xl bg-secondary-dark p-6 text-center shadow-2xl"
       >
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--lop-panel-2)] text-[var(--lop-accent)]">
-          <Shield size={22} />
+        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-background text-primary">
+          <Lock size={22} />
         </div>
         <h1 className="text-xl font-semibold">Enter vault passcode</h1>
-        <p className="mt-2 text-sm text-[var(--lop-muted)]">
+        <p className="mt-2 text-sm text-secondary-darker">
           {unlockMode === "hard" ? (
             <>
               One attempt. {seconds}s remaining. Wrong or timeout clears chats
@@ -137,17 +137,17 @@ export function UnlockPage() {
         <input
           type="password"
           autoFocus
-          className="mt-6 w-full rounded-xl border border-[var(--lop-border)] bg-[var(--lop-panel-2)] px-3 py-3 text-center text-lg tracking-[0.35em] outline-none focus:border-[var(--lop-accent)]"
+          className="mt-6 w-full rounded bg-background p-3 text-center text-lg tracking-[0.35em] outline outline-1 outline-secondary-darker focus:outline-primary"
           value={passcode}
           onChange={(e) => setPasscode(e.target.value)}
           disabled={busy}
           required
         />
-        {error && <p className="mt-3 text-sm text-[var(--lop-danger)]">{error}</p>}
+        {error && <p className="mt-3 text-sm text-danger">{error}</p>}
         <button
           type="submit"
           disabled={busy || (unlockMode === "hard" && remainingMs <= 0)}
-          className="mt-6 w-full rounded-xl bg-[var(--lop-accent)] px-4 py-3 font-semibold text-[#0b141a] disabled:opacity-60"
+          className="mt-6 w-full rounded bg-primary px-6 py-3 font-medium text-white shadow-lg disabled:opacity-60"
         >
           Unlock
         </button>

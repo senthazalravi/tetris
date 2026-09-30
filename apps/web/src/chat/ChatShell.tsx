@@ -11,19 +11,22 @@ import {
   CheckCheck,
   Copy,
   FileText,
-  Forward,
   Info,
+  Lock,
   LogOut,
+  Menu,
   MessageCircle,
-  MoreVertical,
+  Moon,
   Paperclip,
   Pencil,
-  Plus,
   Reply,
   Search,
   Send,
   Settings,
+  Smile,
+  Sun,
   Trash2,
+  User,
   UserPlus,
   X,
 } from "lucide-react";
@@ -48,6 +51,7 @@ import {
   useIdleVaultLock,
   useMultiTabSync,
 } from "@/hooks/sessionGuards";
+import { useTheme } from "@/theme/ThemeProvider";
 
 interface ConversationRow {
   id: string;
@@ -72,11 +76,33 @@ interface DecryptedMessage {
   mine: boolean;
 }
 
+const EMOJIS = [
+  "😀",
+  "😂",
+  "😍",
+  "🥰",
+  "😊",
+  "😎",
+  "🤔",
+  "😢",
+  "😡",
+  "👍",
+  "👎",
+  "👏",
+  "🙏",
+  "🔥",
+  "❤️",
+  "💙",
+  "✨",
+  "🎉",
+  "💯",
+  "👀",
+];
+
 function formatClock(ts: number): string {
-  return new Date(ts).toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  return new Date(ts)
+    .toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    .toLowerCase();
 }
 
 function formatListTime(ts: number): string {
@@ -101,12 +127,12 @@ function formatListTime(ts: number): string {
 
 function Tick({ state }: { state: DeliveryState }) {
   if (state === "read") {
-    return <CheckCheck size={14} className="text-[var(--lop-read)]" />;
+    return <CheckCheck size={14} className="text-[rgb(var(--read))]" />;
   }
   if (state === "delivered") {
-    return <CheckCheck size={14} className="text-[var(--lop-muted)]" />;
+    return <CheckCheck size={14} className="text-secondary-darker" />;
   }
-  return <Check size={14} className="text-[var(--lop-muted)]" />;
+  return <Check size={14} className="text-secondary-darker" />;
 }
 
 function Avatar({ name, size = 40 }: { name: string; size?: number }) {
@@ -126,14 +152,17 @@ function Avatar({ name, size = 40 }: { name: string; size?: number }) {
   );
 }
 
+type ModalKind = "add" | "profile" | "settings" | null;
+
 export function ChatShell() {
   const { session, clearAuth, beginSoftUnlock } = useAuth();
+  const { theme, toggle: toggleTheme } = useTheme();
   const [conversations, setConversations] = useState<ConversationRow[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<DecryptedMessage[]>([]);
   const [draft, setDraft] = useState("");
-  const [lookup, setLookup] = useState("");
-  const [lookupError, setLookupError] = useState<string | null>(null);
+  const [searchVal, setSearchVal] = useState("");
+  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [replyTo, setReplyTo] = useState<DecryptedMessage | null>(null);
   const [editing, setEditing] = useState<DecryptedMessage | null>(null);
@@ -146,11 +175,20 @@ export function ChatShell() {
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
   const [peerTyping, setPeerTyping] = useState(false);
   const [mobileShowChat, setMobileShowChat] = useState(false);
+  const [navMenuOpen, setNavMenuOpen] = useState(false);
+  const [modal, setModal] = useState<ModalKind>(null);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [addUsername, setAddUsername] = useState("");
+  const [addError, setAddError] = useState<string | null>(null);
+  const [chatSearchOpen, setChatSearchOpen] = useState(false);
+  const [chatSearch, setChatSearch] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const typingTimer = useRef<number | null>(null);
   const peerTypingClear = useRef<number | null>(null);
+  const navMenuRef = useRef<HTMLDivElement>(null);
 
   const softLock = useCallback(() => {
     broadcastSessionEvent("lock");
@@ -179,15 +217,43 @@ export function ChatShell() {
     };
   }, [softLock]);
 
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (
+        navMenuRef.current &&
+        !navMenuRef.current.contains(e.target as Node)
+      ) {
+        setNavMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
   const active = useMemo(
     () => conversations.find((c) => c.id === activeId) ?? null,
     [conversations, activeId],
   );
 
-  const visibleMessages = useMemo(
-    () => messages.filter((m) => !hiddenIds.has(m.id)),
-    [messages, hiddenIds],
-  );
+  const filteredConversations = useMemo(() => {
+    const q = searchVal.trim().toLowerCase().replace(/^@/, "");
+    if (!q) return conversations;
+    return conversations.filter((c) => {
+      const name = c.peer?.displayName.toLowerCase() ?? "";
+      const user = c.peer?.username.toLowerCase() ?? "";
+      return name.includes(q) || user.includes(q);
+    });
+  }, [conversations, searchVal]);
+
+  const visibleMessages = useMemo(() => {
+    const base = messages.filter((m) => !hiddenIds.has(m.id));
+    const q = chatSearch.trim().toLowerCase();
+    if (!q || !chatSearchOpen) return base;
+    return base.filter((m) => {
+      if (m.payload.kind === "text") return m.payload.body.toLowerCase().includes(q);
+      return m.payload.name.toLowerCase().includes(q);
+    });
+  }, [messages, hiddenIds, chatSearch, chatSearchOpen]);
 
   const refreshConversations = useCallback(async () => {
     const res = await api.get<{ conversations: ConversationRow[] }>(
@@ -293,7 +359,11 @@ export function ChatShell() {
     ) {
       void loadMessages(active).catch(() => undefined);
     }
-    if (evt.type === "typing.start" && active && evt.conversationId === active.id) {
+    if (
+      evt.type === "typing.start" &&
+      active &&
+      evt.conversationId === active.id
+    ) {
       setPeerTyping(true);
       if (peerTypingClear.current) window.clearTimeout(peerTypingClear.current);
       peerTypingClear.current = window.setTimeout(
@@ -301,7 +371,11 @@ export function ChatShell() {
         1500,
       );
     }
-    if (evt.type === "typing.stop" && active && evt.conversationId === active.id) {
+    if (
+      evt.type === "typing.stop" &&
+      active &&
+      evt.conversationId === active.id
+    ) {
       setPeerTyping(false);
     }
   }, Boolean(session));
@@ -328,7 +402,7 @@ export function ChatShell() {
     const el = inputRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+    el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
   }, [draft]);
 
   function emitTyping() {
@@ -345,6 +419,7 @@ export function ChatShell() {
   }
 
   async function logout() {
+    setNavMenuOpen(false);
     broadcastSessionEvent("wipe");
     try {
       await api.post("/auth/logout", {});
@@ -355,15 +430,16 @@ export function ChatShell() {
     window.location.href = "/";
   }
 
-  async function onLookup(e: FormEvent) {
-    e.preventDefault();
-    setLookupError(null);
+  async function startChatWithUsername(raw: string): Promise<boolean> {
+    setAddError(null);
+    setError(null);
     setBusy(true);
     try {
       if (!hasVaultKeys()) {
         throw new Error("Vault is locked. Unlock with your passcode.");
       }
-      const username = lookup.replace(/^@/, "").toLowerCase().trim();
+      const username = raw.replace(/^@/, "").toLowerCase().trim();
+      if (!username) throw new Error("Enter a username");
       const user = await api.get<{ userId: string }>(
         `/users/lookup?username=${encodeURIComponent(username)}`,
       );
@@ -374,11 +450,24 @@ export function ChatShell() {
       await refreshConversations();
       setActiveId(conv.conversationId);
       setMobileShowChat(true);
-      setLookup("");
+      setModal(null);
+      setAddUsername("");
+      setSearchVal("");
+      return true;
     } catch (err) {
-      setLookupError(err instanceof Error ? err.message : "Not found");
+      const msg = err instanceof Error ? err.message : "Not found";
+      setAddError(msg);
+      setError(msg);
+      return false;
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function onLookup(e: FormEvent) {
+    e.preventDefault();
+    if (searchVal.trim()) {
+      await startChatWithUsername(searchVal);
     }
   }
 
@@ -405,6 +494,7 @@ export function ChatShell() {
     }
     setReplyTo(null);
     setEditing(null);
+    setEmojiOpen(false);
     await loadMessages(active);
     await refreshConversations();
   }
@@ -433,7 +523,7 @@ export function ChatShell() {
           : undefined,
       });
     } catch (err) {
-      setLookupError(err instanceof Error ? err.message : "Send failed");
+      setError(err instanceof Error ? err.message : "Send failed");
       setDraft(text);
     }
   }
@@ -441,7 +531,7 @@ export function ChatShell() {
   async function onPickFile(file: File | null) {
     if (!file || !active?.peer) return;
     setBusy(true);
-    setLookupError(null);
+    setError(null);
     try {
       const encrypted = await encryptFile(file);
       const token = await api.post<{ attachmentId: string }>(
@@ -460,7 +550,7 @@ export function ChatShell() {
         contentKeyB64: encrypted.contentKeyB64,
       });
     } catch (err) {
-      setLookupError(err instanceof Error ? err.message : "Upload failed");
+      setError(err instanceof Error ? err.message : "Upload failed");
     } finally {
       setBusy(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -474,7 +564,7 @@ export function ChatShell() {
       `/attachments/${payload.attachmentId}/download`,
     );
     const plain = await decryptFile(cipher, payload.contentKeyB64);
-    const blob = new Blob([plain], { type: payload.mime });
+    const blob = new Blob([plain.buffer as ArrayBuffer], { type: payload.mime });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -497,366 +587,526 @@ export function ChatShell() {
   }
 
   return (
-    <div className="flex h-full min-h-0 overflow-hidden bg-[var(--lop-bg)]">
-      {/* Messaging-only rail */}
-      <nav className="hidden w-[72px] flex-col items-center justify-between border-r border-[var(--lop-border)] bg-[var(--lop-rail)] py-4 md:flex">
-        <div className="flex flex-col items-center gap-3">
-          <div className="relative flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--lop-panel-3)] text-[var(--lop-accent)]">
-            <span className="absolute -left-2 top-2 h-7 w-1 rounded-full bg-[var(--lop-accent)]" />
-            <MessageCircle size={22} />
-          </div>
-        </div>
-        <div className="flex flex-col items-center gap-4">
+    <div className="flex h-full min-h-0 flex-col bg-background text-text select-none">
+      <header className="relative z-40">
+        <nav className="flex h-14 items-center justify-around bg-background text-text shadow">
           <button
             type="button"
-            onClick={() => void logout()}
-            className="rounded-lg p-2 text-[var(--lop-muted)] hover:bg-[var(--lop-panel-2)] hover:text-[var(--lop-text)]"
-            title="Log out"
+            className="hidden max-lg:block"
+            onClick={() => setMobileShowChat(false)}
+            aria-label="Open chats"
           >
-            <LogOut size={20} />
+            <Menu size={22} />
           </button>
-          <button
-            type="button"
-            className="rounded-lg p-2 text-[var(--lop-muted)] hover:bg-[var(--lop-panel-2)]"
-            title="Settings"
-          >
-            <Settings size={20} />
-          </button>
-          <Avatar name={session?.displayName ?? "?"} size={34} />
-        </div>
-      </nav>
 
-      {/* Chat list */}
-      <aside
-        className={`flex w-full max-w-full flex-col border-r border-[var(--lop-border)] bg-[var(--lop-panel)] md:w-[360px] ${
-          mobileShowChat ? "hidden md:flex" : "flex"
-        }`}
-      >
-        <header className="flex items-center justify-between px-4 pb-2 pt-4">
-          <div>
-            <h1 className="text-[22px] font-semibold tracking-tight">Chats</h1>
-            <p className="text-xs text-[var(--lop-muted)]">@{session?.username}</p>
+          <div className="flex items-center justify-center gap-x-2">
+            <h1 className="font-brand text-3xl font-medium max-sm:text-xl">
+              Lop
+            </h1>
           </div>
-          <button
-            type="button"
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--lop-accent)] text-[#0b141a] shadow"
-            title="New chat"
-            onClick={() => inputRef.current?.blur()}
-          >
-            <Plus size={20} />
-          </button>
-        </header>
 
-        <form onSubmit={onLookup} className="px-3 pb-3">
-          <div className="flex items-center gap-2 rounded-lg bg-[var(--lop-panel-2)] px-3 py-2.5">
-            <Search size={16} className="text-[var(--lop-muted)]" />
-            <input
-              className="w-full bg-transparent text-sm outline-none placeholder:text-[var(--lop-muted)]"
-              placeholder="Search or start a new chat"
-              value={lookup}
-              onChange={(e) => setLookup(e.target.value)}
-              disabled={busy}
-            />
-          </div>
-          {lookupError && (
-            <p className="mt-2 text-xs text-[var(--lop-danger)]">{lookupError}</p>
-          )}
-        </form>
-
-        <div className="flex gap-2 overflow-x-auto px-3 pb-3">
-          {["All", "Unread", "Favourites"].map((f, i) => (
-            <span
-              key={f}
-              className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium ${
-                i === 0
-                  ? "bg-[var(--lop-accent)] text-[#0b141a]"
-                  : "bg-[var(--lop-panel-2)] text-[var(--lop-muted)]"
-              }`}
+          <div className="flex items-center gap-x-6">
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="rounded-lg p-1.5 hover:bg-secondary-dark"
+              title={theme === "dark" ? "Light mode" : "Dark mode"}
             >
-              {f}
-            </span>
-          ))}
-        </div>
+              {theme === "dark" ? <Sun size={20} /> : <Moon size={20} />}
+            </button>
 
-        <div className="flex-1 overflow-y-auto">
-          {conversations.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
-              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[var(--lop-panel-2)] text-[var(--lop-accent)]">
-                <UserPlus size={24} />
-              </div>
-              <p className="font-medium">No conversations yet</p>
-              <p className="max-w-[220px] text-sm text-[var(--lop-muted)]">
-                Find someone by exact @username and start messaging.
-              </p>
-            </div>
-          ) : (
-            conversations.map((c) => (
+            <div className="relative shrink-0" ref={navMenuRef}>
               <button
-                key={c.id}
                 type="button"
-                onClick={() => {
-                  setActiveId(c.id);
-                  setMobileShowChat(true);
-                }}
-                className={`flex w-full items-center gap-3 px-3 py-3 text-left transition hover:bg-[var(--lop-panel-2)] ${
-                  activeId === c.id ? "bg-[var(--lop-panel-2)]" : ""
-                }`}
+                onClick={() => setNavMenuOpen((v) => !v)}
+                className="rounded-full"
+                aria-label="Account menu"
               >
-                <Avatar name={c.peer?.displayName ?? "?"} size={48} />
-                <div className="min-w-0 flex-1 border-b border-[var(--lop-border)] pb-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate font-medium">
-                      {c.peer?.displayName ?? "Unknown"}
-                    </span>
-                    <span className="shrink-0 text-[11px] text-[var(--lop-muted)]">
-                      {formatListTime(c.createdAt)}
-                    </span>
-                  </div>
-                  <div className="truncate text-sm text-[var(--lop-muted)]">
-                    @{c.peer?.username}
-                  </div>
-                </div>
+                <Avatar name={session?.displayName ?? "?"} size={40} />
               </button>
-            ))
-          )}
-        </div>
-      </aside>
-
-      {/* Conversation pane */}
-      <main
-        className={`relative min-w-0 flex-1 flex-col ${
-          mobileShowChat ? "flex" : "hidden md:flex"
-        }`}
-      >
-        {!active ? (
-          <div className="lop-chat-bg flex flex-1 flex-col items-center justify-center gap-6 px-6 text-center">
-            <div className="flex h-20 w-20 items-center justify-center rounded-full border border-[var(--lop-border)] bg-[var(--lop-panel)] text-[var(--lop-accent)] shadow-lg">
-              <MessageCircle size={36} />
-            </div>
-            <div>
-              <h2 className="text-3xl font-light tracking-tight">Lop</h2>
-              <p className="mt-2 max-w-sm text-sm text-[var(--lop-muted)]">
-                Private messaging. Messages disappear after 24 hours.
-              </p>
-            </div>
-            <div className="flex gap-8 text-sm text-[var(--lop-muted)]">
-              <div className="flex flex-col items-center gap-2">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--lop-panel-2)]">
-                  <FileText size={20} />
-                </div>
-                Send files
-              </div>
-              <div className="flex flex-col items-center gap-2">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--lop-panel-2)]">
-                  <UserPlus size={20} />
-                </div>
-                Add by @username
-              </div>
-            </div>
-          </div>
-        ) : (
-          <>
-            <header className="flex items-center justify-between border-b border-[var(--lop-border)] bg-[var(--lop-panel)] px-3 py-2.5 md:px-4">
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  className="rounded-lg p-1 text-[var(--lop-muted)] md:hidden"
-                  onClick={() => setMobileShowChat(false)}
-                >
-                  ←
-                </button>
-                <Avatar name={active.peer?.displayName ?? "?"} size={40} />
-                <div>
-                  <div className="font-medium leading-tight">
-                    {active.peer?.displayName}
-                  </div>
-                  <div className="text-xs text-[var(--lop-muted)]">
-                    {peerTyping ? (
-                      <span className="text-[var(--lop-accent)]">typing…</span>
-                    ) : (
-                      `@${active.peer?.username}`
-                    )}
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-1 text-[var(--lop-muted)]">
-                <button
-                  type="button"
-                  className="rounded-lg p-2 hover:bg-[var(--lop-panel-2)]"
-                  title="Search in chat"
-                >
-                  <Search size={18} />
-                </button>
-                <button
-                  type="button"
-                  className="rounded-lg p-2 hover:bg-[var(--lop-panel-2)]"
-                  title="More"
-                >
-                  <MoreVertical size={18} />
-                </button>
-              </div>
-            </header>
-
-            <div
-              ref={listRef}
-              className="lop-chat-bg flex flex-1 flex-col gap-1.5 overflow-y-auto px-3 py-4 md:px-8"
-            >
-              {visibleMessages.map((m) => (
+              {navMenuOpen && (
                 <div
-                  key={m.id}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    setMenu({ x: e.clientX, y: e.clientY, message: m });
-                  }}
-                  className={`max-w-[85%] px-1 sm:max-w-[65%] ${
-                    m.mine ? "ml-auto" : ""
-                  }`}
+                  role="menu"
+                  className="absolute right-0 top-12 z-50 w-60 rounded-lg bg-secondary-dark p-2 shadow-2xl"
                 >
-                  <div
-                    className={`px-3 py-2 text-[14.5px] leading-snug shadow-sm ${
-                      m.mine ? "lop-bubble-out" : "lop-bubble-in"
-                    }`}
-                  >
-                    {m.payload.replyTo && (
-                      <div className="mb-1.5 rounded-md border-l-[3px] border-[var(--lop-accent)] bg-black/20 px-2 py-1.5 text-xs">
-                        <div className="font-semibold text-[var(--lop-accent)]">
-                          {m.payload.replyTo.senderName}
-                        </div>
-                        <div className="truncate text-[var(--lop-muted)]">
-                          {m.payload.replyTo.body}
-                        </div>
-                      </div>
-                    )}
-                    {m.payload.kind === "text" ? (
-                      <div className="whitespace-pre-wrap break-words">
-                        {m.payload.body}
-                        {m.payload.edited ? (
-                          <span className="ml-1 text-[10px] italic text-[var(--lop-muted)]">
-                            edited
-                          </span>
-                        ) : null}
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        className="flex items-center gap-2 rounded-lg bg-black/15 px-2 py-2 text-left hover:bg-black/25"
-                        onClick={() => void downloadAttachment(m.payload)}
-                      >
-                        <FileText size={18} />
-                        <span className="underline">{m.payload.name}</span>
-                      </button>
-                    )}
-                    <div className="mt-1 flex items-center justify-end gap-1 text-[11px] text-[var(--lop-muted)]">
-                      <span>{formatClock(m.createdAt)}</span>
-                      {m.mine ? <Tick state={m.deliveryState} /> : null}
-                    </div>
-                  </div>
-                </div>
-              ))}
-
-              {peerTyping && (
-                <div className="flex items-center gap-2 px-2 py-1 text-xs text-[var(--lop-muted)]">
-                  <span className="inline-flex gap-1">
-                    {[0, 1, 2].map((i) => (
-                      <i
-                        key={i}
-                        className="lop-typing-dot inline-block h-1.5 w-1.5 rounded-full bg-[var(--lop-accent)]"
-                        style={{ animationDelay: `${i * 0.15}s` }}
-                      />
-                    ))}
-                  </span>
-                  {active.peer?.displayName} is typing
+                  <MenuItem
+                    icon={<User size={16} />}
+                    label="Profile"
+                    onClick={() => {
+                      setNavMenuOpen(false);
+                      setModal("profile");
+                    }}
+                  />
+                  <MenuItem
+                    icon={<UserPlus size={16} />}
+                    label="Add contact"
+                    onClick={() => {
+                      setNavMenuOpen(false);
+                      setAddUsername("");
+                      setAddError(null);
+                      setModal("add");
+                    }}
+                  />
+                  <MenuItem
+                    icon={<Settings size={16} />}
+                    label="Settings"
+                    onClick={() => {
+                      setNavMenuOpen(false);
+                      setModal("settings");
+                    }}
+                  />
+                  <MenuItem
+                    icon={<LogOut size={16} />}
+                    label="Logout"
+                    onClick={() => void logout()}
+                  />
                 </div>
               )}
             </div>
+          </div>
+        </nav>
+      </header>
 
-            {(replyTo || editing) && (
-              <div className="flex items-center justify-between border-t border-[var(--lop-border)] bg-[var(--lop-panel-2)] px-4 py-2">
-                <div className="min-w-0 border-l-[3px] border-[var(--lop-accent)] pl-3">
-                  <div className="text-xs font-semibold text-[var(--lop-accent)]">
-                    {editing ? "Editing message" : "Replying"}
-                  </div>
-                  <div className="truncate text-sm text-[var(--lop-muted)]">
-                    {editing
-                      ? editing.payload.kind === "text"
-                        ? editing.payload.body
-                        : editing.payload.name
-                      : replyTo?.payload.kind === "text"
-                        ? replyTo.payload.body
-                        : replyTo?.payload.name}
-                  </div>
-                </div>
+      <main className="flex h-[calc(100vh-3.5rem)] w-full gap-x-6 bg-background p-4 max-md:gap-x-0 max-md:p-2">
+        {/* Chat list */}
+        <aside
+          className={`relative z-10 flex h-full w-[22rem] min-h-0 flex-col overflow-y-auto bg-background p-2 max-sm:w-auto max-lg:fixed max-lg:inset-y-14 max-lg:left-0 max-lg:pb-20 ${
+            mobileShowChat ? "max-lg:hidden" : ""
+          }`}
+        >
+          <div className="flex min-h-full flex-col gap-y-5">
+            <div className="flex items-center rounded-md bg-secondary-dark px-2 text-text">
+              <Search size={16} className="text-secondary-darker" />
+              <input
+                value={searchVal}
+                onChange={(e) => setSearchVal(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void onLookup(e as unknown as FormEvent);
+                  }
+                }}
+                className="w-full bg-inherit px-3 py-3 outline-none"
+                type="text"
+                placeholder="Search"
+                aria-label="Search chats"
+              />
+              {searchVal.trim().length > 0 && (
                 <button
                   type="button"
-                  className="rounded-lg p-2 text-[var(--lop-muted)] hover:bg-[var(--lop-panel)]"
-                  onClick={() => {
-                    setReplyTo(null);
-                    setEditing(null);
-                  }}
+                  aria-label="Clear search"
+                  onClick={() => setSearchVal("")}
                 >
                   <X size={16} />
                 </button>
+              )}
+            </div>
+
+            {error && (
+              <p className="px-1 text-center text-sm text-danger">{error}</p>
+            )}
+
+            {conversations.length === 0 ? (
+              <span className="mt-4 mb-4 self-center px-2 text-center text-text">
+                Open your profile menu, add a contact by @username, and start
+                chatting
+              </span>
+            ) : filteredConversations.length === 0 ? (
+              <span className="mt-4 self-center text-center text-secondary-darker">
+                No chats match “{searchVal}”
+              </span>
+            ) : (
+              <div className="flex flex-col gap-y-1">
+                {filteredConversations.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => {
+                      setActiveId(c.id);
+                      setMobileShowChat(true);
+                      setDetailsOpen(false);
+                      setChatSearchOpen(false);
+                      setChatSearch("");
+                      setError(null);
+                    }}
+                    className={`flex w-full items-center gap-x-3 p-1 text-left text-text hover:cursor-pointer hover:bg-secondary-dark ${
+                      activeId === c.id ? "bg-secondary-dark" : ""
+                    }`}
+                  >
+                    <Avatar name={c.peer?.displayName ?? "?"} size={56} />
+                    <div className="flex w-full min-w-0 flex-col gap-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate font-medium">
+                          {c.peer?.displayName ?? "Unknown"}
+                        </span>
+                        <span className="shrink-0 text-xs text-secondary-darker">
+                          {formatListTime(c.createdAt)}
+                        </span>
+                      </div>
+                      <span className="truncate text-sm text-secondary-darker">
+                        @{c.peer?.username}
+                      </span>
+                    </div>
+                  </button>
+                ))}
               </div>
             )}
 
-            <form
-              onSubmit={sendMessage}
-              className="flex items-end gap-2 border-t border-[var(--lop-border)] bg-[var(--lop-panel)] p-3"
+            <div className="sticky -bottom-5 z-50 mt-auto flex w-full gap-7 rounded-md bg-background/100 px-3 py-3">
+              <div className="flex flex-col items-center gap-2 rounded-md bg-secondary-dark px-5 py-2">
+                <MessageCircle size={20} />
+                <span className="text-sm text-text">Chats</span>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        {/* Conversation */}
+        <section
+          className={`relative flex min-w-0 flex-[1.6] flex-col ${
+            mobileShowChat ? "" : "max-lg:hidden"
+          }`}
+        >
+          {!active ? (
+            <div className="mt-20 flex max-w-96 flex-col items-center justify-center self-center justify-self-center">
+              <div className="flex flex-col items-center gap-y-6 text-center">
+                <div className="flex h-24 w-24 items-center justify-center rounded-full bg-secondary-dark text-primary">
+                  <Lock size={40} />
+                </div>
+                <div className="flex flex-col items-center gap-y-1 text-xl font-light text-text">
+                  <div className="flex items-center gap-x-1">
+                    <p>End-to-end encrypted</p>
+                    <Lock size={16} />
+                  </div>
+                  <p>Private chats</p>
+                  <p className="mt-2 text-sm text-secondary-darker">
+                    Messages disappear after 24 hours
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="relative flex h-full flex-col justify-between gap-y-3">
+              <div className="flex flex-col gap-1">
+                <div
+                  className="flex cursor-pointer items-center justify-between text-text"
+                  onClick={() => setDetailsOpen(true)}
+                >
+                  <div className="flex gap-x-3">
+                    <button
+                      type="button"
+                      className="self-center rounded-lg p-1 text-secondary-darker lg:hidden"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMobileShowChat(false);
+                      }}
+                    >
+                      ←
+                    </button>
+                    <Avatar name={active.peer?.displayName ?? "?"} size={56} />
+                    <div className="flex flex-col gap-y-1">
+                      <span className="text-lg font-medium max-sm:text-base">
+                        {active.peer?.displayName}
+                      </span>
+                      <span className="text-sm text-secondary-darker max-sm:text-sm">
+                        {peerTyping ? (
+                          <span className="text-primary">typing…</span>
+                        ) : (
+                          `@${active.peer?.username}`
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="rounded-lg p-2 hover:bg-secondary-dark"
+                    title="Search in chat"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setChatSearchOpen((v) => !v);
+                      setChatSearch("");
+                    }}
+                  >
+                    <Search size={18} />
+                  </button>
+                </div>
+
+                {chatSearchOpen && (
+                  <div className="flex items-center rounded-md bg-secondary-dark px-2">
+                    <Search size={14} className="text-secondary-darker" />
+                    <input
+                      autoFocus
+                      value={chatSearch}
+                      onChange={(e) => setChatSearch(e.target.value)}
+                      className="w-full bg-inherit px-3 py-2 text-sm outline-none"
+                      placeholder="Search messages"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setChatSearchOpen(false);
+                        setChatSearch("");
+                      }}
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div
+                ref={listRef}
+                className="flex flex-1 flex-col gap-y-3 overflow-y-auto py-2"
+              >
+                {visibleMessages.map((m) => (
+                  <div
+                    key={m.id}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setMenu({ x: e.clientX, y: e.clientY, message: m });
+                    }}
+                    className={`flex gap-x-2 text-text ${
+                      m.mine ? "self-end" : ""
+                    }`}
+                  >
+                    {!m.mine && (
+                      <Avatar name={active.peer?.displayName ?? "?"} size={36} />
+                    )}
+                    <div
+                      className={`flex min-w-20 max-w-96 flex-col justify-center gap-y-1 px-4 py-2 max-md:max-w-80 max-sm:max-w-64 ${
+                        m.mine ? "lop-bubble-out" : "lop-bubble-in"
+                      }`}
+                    >
+                      {m.payload.replyTo && (
+                        <div className="mb-2 flex flex-col rounded-xl bg-white/35 px-4 py-2 max-sm:text-sm">
+                          <span className="text-sm font-semibold">
+                            {m.payload.replyTo.senderName}
+                          </span>
+                          <div className="truncate">{m.payload.replyTo.body}</div>
+                        </div>
+                      )}
+                      {m.payload.kind === "text" ? (
+                        <span className="break-words max-sm:text-sm">
+                          {m.payload.body}
+                          {m.payload.edited ? (
+                            <span className="ml-1 text-xs italic opacity-80">
+                              Edited
+                            </span>
+                          ) : null}
+                        </span>
+                      ) : m.payload.kind === "file" ? (
+                        <button
+                          type="button"
+                          className="flex items-center gap-2 text-left underline"
+                          onClick={() => {
+                            if (m.payload.kind === "file") {
+                              void downloadAttachment(m.payload);
+                            }
+                          }}
+                        >
+                          <FileText size={16} />
+                          {m.payload.name}
+                        </button>
+                      ) : null}
+                      <div className="ml-auto flex shrink-0 flex-nowrap items-center gap-2">
+                        <span
+                          className={`text-xs ${
+                            m.mine ? "text-gray-200" : "text-secondary-darker"
+                          }`}
+                        >
+                          {formatClock(m.createdAt)}
+                        </span>
+                        {m.mine ? <Tick state={m.deliveryState} /> : null}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+
+                {peerTyping && (
+                  <div className="flex items-center gap-2 px-2 text-xs text-secondary-darker">
+                    <span className="inline-flex gap-1">
+                      {[0, 1, 2].map((i) => (
+                        <i
+                          key={i}
+                          className="lop-typing-dot inline-block h-1.5 w-1.5 rounded-full bg-primary"
+                          style={{ animationDelay: `${i * 0.15}s` }}
+                        />
+                      ))}
+                    </span>
+                    {active.peer?.displayName} is typing
+                  </div>
+                )}
+              </div>
+
+              {(replyTo || editing) && (
+                <div className="flex items-center justify-between rounded-md bg-secondary-dark px-2 py-2 max-sm:text-sm">
+                  <p className="px-2 text-text">
+                    {editing
+                      ? `Editing "${
+                          editing.payload.kind === "text"
+                            ? editing.payload.body.slice(0, 80)
+                            : editing.payload.name
+                        }"`
+                      : `Replying to "${
+                          replyTo?.payload.kind === "text"
+                            ? replyTo.payload.body.slice(0, 80)
+                            : replyTo?.payload.name
+                        }"`}
+                  </p>
+                  <button
+                    type="button"
+                    className="text-text"
+                    onClick={() => {
+                      setReplyTo(null);
+                      setEditing(null);
+                    }}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              )}
+
+              <form onSubmit={sendMessage} className="relative" autoComplete="off">
+                <input
+                  ref={fileRef}
+                  type="file"
+                  className="hidden"
+                  onChange={(e) => void onPickFile(e.target.files?.[0] ?? null)}
+                />
+
+                {emojiOpen && (
+                  <div className="absolute bottom-full mb-2 grid w-full max-w-sm grid-cols-10 gap-1 rounded-xl bg-secondary-dark p-3 shadow-2xl">
+                    {EMOJIS.map((em) => (
+                      <button
+                        key={em}
+                        type="button"
+                        className="rounded p-1 text-lg hover:bg-secondary"
+                        onClick={() => {
+                          setDraft((d) => d + em);
+                          inputRef.current?.focus();
+                        }}
+                      >
+                        {em}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-end rounded-xl bg-secondary text-text">
+                  <button
+                    type="button"
+                    className="px-2 hover:text-primary"
+                    onClick={() => setEmojiOpen((v) => !v)}
+                    title="Emoji"
+                  >
+                    <Smile size={22} />
+                  </button>
+                  <textarea
+                    ref={inputRef}
+                    value={draft}
+                    onChange={(e) => {
+                      setDraft(e.target.value);
+                      emitTyping();
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        void sendMessage(e as unknown as FormEvent);
+                      }
+                    }}
+                    className="w-full resize-none rounded-sm bg-secondary px-3 py-5 outline-none max-sm:text-sm"
+                    style={{ scrollbarWidth: "none" }}
+                    placeholder="Your message"
+                    rows={1}
+                    maxLength={1000}
+                    spellCheck={false}
+                  />
+                  {!draft.trim() ? (
+                    <button
+                      type="button"
+                      className="px-3 hover:text-primary"
+                      disabled={busy}
+                      onClick={() => fileRef.current?.click()}
+                      title="Attach file"
+                    >
+                      <Paperclip size={20} />
+                    </button>
+                  ) : (
+                    <button
+                      type="submit"
+                      className="rounded-full bg-primary-dark p-2 transition-colors hover:bg-transparent"
+                      title="Send"
+                    >
+                      <Send size={18} className="text-white" />
+                    </button>
+                  )}
+                </div>
+              </form>
+            </div>
+          )}
+        </section>
+
+        {/* Contact details drawer */}
+        {detailsOpen && active && (
+          <aside className="flex w-80 flex-col gap-4 overflow-y-auto rounded-xl bg-secondary-dark p-4 max-xl:fixed max-xl:inset-y-14 max-xl:right-0 max-xl:z-30 max-xl:shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold">Contact</h2>
+              <button type="button" onClick={() => setDetailsOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex flex-col items-center gap-3 py-4">
+              <Avatar name={active.peer?.displayName ?? "?"} size={88} />
+              <div className="text-center">
+                <div className="text-xl font-medium">
+                  {active.peer?.displayName}
+                </div>
+                <div className="text-secondary-darker">
+                  @{active.peer?.username}
+                </div>
+              </div>
+            </div>
+            <p className="text-center text-sm text-secondary-darker">
+              Messages in this chat expire after 24 hours.
+            </p>
+            <button
+              type="button"
+              className="rounded-lg bg-background px-4 py-3 text-left hover:bg-secondary"
+              onClick={() => {
+                setDetailsOpen(false);
+                setChatSearchOpen(true);
+              }}
             >
-              <input
-                ref={fileRef}
-                type="file"
-                className="hidden"
-                onChange={(e) => void onPickFile(e.target.files?.[0] ?? null)}
-              />
-              <button
-                type="button"
-                onClick={() => fileRef.current?.click()}
-                className="mb-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--lop-border)] bg-[var(--lop-panel-2)] text-[var(--lop-muted)] hover:text-[var(--lop-text)]"
-                disabled={busy}
-                title="Attach file"
-              >
-                <Paperclip size={18} />
-              </button>
-              <textarea
-                ref={inputRef}
-                rows={1}
-                className="max-h-[120px] min-h-[42px] flex-1 resize-none rounded-xl bg-[var(--lop-input)] px-4 py-2.5 text-sm outline-none placeholder:text-[var(--lop-muted)]"
-                placeholder="Type a message"
-                value={draft}
-                onChange={(e) => {
-                  setDraft(e.target.value);
-                  emitTyping();
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    void sendMessage(e as unknown as FormEvent);
-                  }
-                }}
-              />
-              <button
-                type="submit"
-                className="mb-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--lop-accent)] text-[#0b141a] shadow hover:bg-[var(--lop-accent-hover)] disabled:opacity-50"
-                disabled={!draft.trim()}
-                title="Send"
-              >
-                <Send size={18} />
-              </button>
-            </form>
-          </>
+              Search messages
+            </button>
+          </aside>
         )}
       </main>
 
       {menu && (
         <div
-          className="fixed z-50 min-w-[200px] overflow-hidden rounded-2xl border border-[var(--lop-border)] bg-[var(--lop-panel-2)] py-1 text-sm shadow-2xl"
+          className="fixed z-50 flex min-w-32 flex-col self-end rounded-2xl bg-secondary-dark p-2 text-text shadow-2xl"
           style={{ left: menu.x, top: menu.y }}
           onClick={(e) => e.stopPropagation()}
         >
-          <MenuRow
-            icon={<Reply size={16} />}
+          {menu.message.mine && menu.message.payload.kind === "text" && (
+            <CtxRow
+              label="Edit"
+              icon={<Pencil size={14} />}
+              onClick={() => {
+                const payload = menu.message.payload;
+                if (payload.kind !== "text") return;
+                setEditing(menu.message);
+                setDraft(payload.body);
+                setReplyTo(null);
+                setMenu(null);
+                window.setTimeout(() => inputRef.current?.focus(), 0);
+              }}
+            />
+          )}
+          <CtxRow
             label="Reply"
+            icon={<Reply size={14} />}
             onClick={() => {
               setReplyTo(menu.message);
               setEditing(null);
@@ -864,135 +1114,216 @@ export function ChatShell() {
               window.setTimeout(() => inputRef.current?.focus(), 0);
             }}
           />
-          <MenuRow
-            icon={<Copy size={16} />}
-            label="Copy"
-            onClick={() => {
-              const t =
-                menu.message.payload.kind === "text"
-                  ? menu.message.payload.body
-                  : menu.message.payload.name;
-              void navigator.clipboard.writeText(t);
-              setMenu(null);
-            }}
-          />
-          {menu.message.mine && menu.message.payload.kind === "text" && (
-            <MenuRow
-              icon={<Pencil size={16} />}
-              label="Edit"
+          {menu.message.mine && (
+            <CtxRow
+              label="Unsend"
+              icon={<Trash2 size={14} />}
+              onClick={() => void deleteMessage(menu.message, "everyone")}
+            />
+          )}
+          {menu.message.payload.kind === "text" && (
+            <CtxRow
+              label="Copy"
+              icon={<Copy size={14} />}
               onClick={() => {
-                setEditing(menu.message);
-                setDraft(menu.message.payload.body);
-                setReplyTo(null);
+                const payload = menu.message.payload;
+                if (payload.kind !== "text") return;
+                void navigator.clipboard.writeText(payload.body);
                 setMenu(null);
               }}
             />
           )}
-          <MenuRow
-            icon={<Forward size={16} />}
-            label="Forward"
-            onClick={() => {
-              if (menu.message.payload.kind === "text") {
-                setDraft(`Fwd: ${menu.message.payload.body}`);
-              }
-              setMenu(null);
-            }}
-          />
-          <MenuRow
-            icon={<Info size={16} />}
-            label="Message info"
+          <CtxRow
+            label="Info"
+            icon={<Info size={14} />}
             onClick={() => {
               setInfoMsg(menu.message);
               setMenu(null);
             }}
           />
-          <div className="my-1 h-px bg-[var(--lop-border)]" />
-          <MenuRow
-            icon={<Trash2 size={16} />}
+          <CtxRow
             label="Delete for me"
-            danger
+            icon={<Trash2 size={14} />}
             onClick={() => void deleteMessage(menu.message, "me")}
           />
-          {menu.message.mine && (
-            <MenuRow
-              icon={<Trash2 size={16} />}
-              label="Delete for everyone"
-              danger
-              onClick={() => void deleteMessage(menu.message, "everyone")}
-            />
-          )}
         </div>
       )}
 
       {infoMsg && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px]">
-          <div className="w-full max-w-sm rounded-2xl border border-[var(--lop-border)] bg-[var(--lop-panel)] p-5 shadow-2xl">
-            <h2 className="text-lg font-semibold">Message info</h2>
-            <div className="mt-4 space-y-3 text-sm text-[var(--lop-muted)]">
-              <div className="flex justify-between">
-                <span>Sent</span>
-                <span>{new Date(infoMsg.createdAt).toLocaleString()}</span>
-              </div>
-              {infoMsg.mine && (
-                <>
-                  <div className="flex items-center justify-between">
-                    <span className="flex items-center gap-2">
-                      Delivered <Tick state="delivered" />
-                    </span>
-                    <span>
-                      {infoMsg.deliveryState !== "accepted" ? "Yes" : "Pending"}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="flex items-center gap-2">
-                      Read <Tick state="read" />
-                    </span>
-                    <span>
-                      {infoMsg.deliveryState === "read" ? "Yes" : "Pending"}
-                    </span>
-                  </div>
-                </>
-              )}
-              <div className="flex justify-between">
-                <span>Expires</span>
-                <span>{new Date(infoMsg.expiresAt).toLocaleString()}</span>
+        <Modal title="Message info" onClose={() => setInfoMsg(null)}>
+          <div className="space-y-3 text-sm text-secondary-darker">
+            <Row label="Sent" value={new Date(infoMsg.createdAt).toLocaleString()} />
+            {infoMsg.mine && (
+              <>
+                <Row
+                  label="Delivered"
+                  value={infoMsg.deliveryState !== "accepted" ? "Yes" : "Pending"}
+                />
+                <Row
+                  label="Read"
+                  value={infoMsg.deliveryState === "read" ? "Yes" : "Pending"}
+                />
+              </>
+            )}
+            <Row
+              label="Expires"
+              value={new Date(infoMsg.expiresAt).toLocaleString()}
+            />
+          </div>
+        </Modal>
+      )}
+
+      {modal === "add" && (
+        <Modal title="Add contact" onClose={() => setModal(null)}>
+          <form
+            className="flex flex-col gap-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void startChatWithUsername(addUsername);
+            }}
+          >
+            <input
+              autoFocus
+              value={addUsername}
+              onChange={(e) => setAddUsername(e.target.value)}
+              className="w-full rounded bg-background p-3 text-text outline-none ring-1 ring-secondary-dark focus:ring-primary"
+              placeholder="Search username"
+            />
+            {addError && <p className="text-sm text-danger">{addError}</p>}
+            <button
+              type="submit"
+              disabled={busy}
+              className="rounded bg-primary px-6 py-3 font-medium text-white shadow-lg disabled:opacity-60"
+            >
+              {busy ? "Looking up…" : "Start chat"}
+            </button>
+          </form>
+        </Modal>
+      )}
+
+      {modal === "profile" && (
+        <Modal title="Profile" onClose={() => setModal(null)}>
+          <div className="flex flex-col items-center gap-3 py-2">
+            <Avatar name={session?.displayName ?? "?"} size={80} />
+            <div className="text-center">
+              <div className="text-xl font-semibold">{session?.displayName}</div>
+              <div className="text-secondary-darker">@{session?.username}</div>
+              <div className="mt-1 text-sm text-secondary-darker">
+                {session?.email}
               </div>
             </div>
+          </div>
+        </Modal>
+      )}
+
+      {modal === "settings" && (
+        <Modal title="Settings" onClose={() => setModal(null)}>
+          <div className="flex flex-col gap-3">
             <button
               type="button"
-              className="mt-5 w-full rounded-xl bg-[var(--lop-accent)] py-2.5 font-semibold text-[#0b141a]"
-              onClick={() => setInfoMsg(null)}
+              className="flex items-center justify-between rounded-lg bg-background px-4 py-3 hover:bg-secondary"
+              onClick={toggleTheme}
             >
-              Close
+              <span>Theme</span>
+              <span className="text-secondary-darker capitalize">{theme}</span>
+            </button>
+            <button
+              type="button"
+              className="flex items-center justify-between rounded-lg bg-background px-4 py-3 hover:bg-secondary"
+              onClick={() => {
+                setModal(null);
+                softLock();
+              }}
+            >
+              <span>Lock vault now</span>
+              <Lock size={16} />
+            </button>
+            <button
+              type="button"
+              className="flex items-center justify-between rounded-lg bg-background px-4 py-3 text-danger hover:bg-secondary"
+              onClick={() => void logout()}
+            >
+              <span>Logout</span>
+              <LogOut size={16} />
             </button>
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   );
 }
 
-function MenuRow({
+function MenuItem({
   icon,
   label,
   onClick,
-  danger,
 }: {
   icon: React.ReactNode;
   label: string;
   onClick: () => void;
-  danger?: boolean;
 }) {
   return (
     <button
       type="button"
-      className={`flex w-full items-center justify-between gap-4 px-4 py-2.5 text-left hover:bg-[var(--lop-panel)] ${
-        danger ? "text-[var(--lop-danger)]" : ""
-      }`}
       onClick={onClick}
+      className="flex w-full cursor-pointer items-center gap-x-2 rounded p-2 hover:bg-secondary"
+    >
+      {icon}
+      <p>{label}</p>
+    </button>
+  );
+}
+
+function CtxRow({
+  label,
+  icon,
+  onClick,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex cursor-pointer items-center justify-between rounded-sm p-2 hover:bg-secondary-darker/30"
     >
       <span>{label}</span>
-      <span className="opacity-80">{icon}</span>
+      <span>{icon}</span>
     </button>
+  );
+}
+
+function Modal({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px]">
+      <div className="w-full max-w-md rounded-2xl bg-secondary-dark p-5 shadow-2xl">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-xl font-semibold">{title}</h2>
+          <button type="button" onClick={onClose} aria-label="Close">
+            <X size={18} />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between gap-4">
+      <span>{label}</span>
+      <span className="text-right text-text">{value}</span>
+    </div>
   );
 }

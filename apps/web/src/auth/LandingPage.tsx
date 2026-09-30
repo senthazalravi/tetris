@@ -3,46 +3,47 @@ import { Lock, MessageCircle, Timer } from "lucide-react";
 
 export function LandingPage() {
   return (
-    <div className="flex min-h-full flex-col items-center justify-center bg-[var(--lop-bg)] px-4">
-      <div className="w-full max-w-md text-center">
-        <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--lop-panel)] text-[var(--lop-accent)] shadow-lg ring-1 ring-[var(--lop-border)]">
-          <MessageCircle size={32} />
+    <div className="flex min-h-full flex-col items-center justify-center bg-background px-4 text-text">
+      <div className="w-full max-w-lg">
+        <div className="flex flex-col gap-y-2">
+          <h1 className="font-brand text-6xl font-bold max-sm:text-5xl">Lop</h1>
+          <h2 className="text-2xl font-semibold">
+            Discover your next conversation
+          </h2>
+          <p className="text-lg text-secondary-darker">
+            Private, end-to-end encrypted messaging. Every message disappears
+            after 24 hours.
+          </p>
         </div>
-        <h1 className="text-4xl font-semibold tracking-tight text-[var(--lop-accent)]">
-          Lop
-        </h1>
-        <p className="mt-3 text-[var(--lop-muted)]">
-          Private messaging. Nothing stays forever.
-        </p>
 
-        <div className="mt-8 grid gap-3 text-left text-sm text-[var(--lop-muted)]">
+        <div className="mt-8 grid gap-3">
           <Feature
             icon={<Lock size={16} />}
             title="End-to-end encrypted"
-            body="Messages are sealed in your browser before they leave."
+            body="Sealed in your browser before anything leaves the device."
           />
           <Feature
             icon={<Timer size={16} />}
             title="24-hour lifetime"
-            body="Every message and file disappears automatically."
+            body="Messages and files expire automatically."
           />
           <Feature
             icon={<MessageCircle size={16} />}
             title="Find by @username"
-            body="Exact lookup, private contacts, and chats that expire."
+            body="Exact lookup, private contacts, messaging only."
           />
         </div>
 
         <div className="mt-10 flex flex-col gap-3">
           <Link
             to="/login"
-            className="rounded-xl bg-[var(--lop-accent)] px-4 py-3 font-semibold text-[#0b141a] hover:bg-[var(--lop-accent-hover)]"
+            className="rounded bg-primary px-6 py-3 text-center font-medium text-white shadow-lg"
           >
             Log in
           </Link>
           <Link
             to="/register"
-            className="rounded-xl border border-[var(--lop-border)] bg-[var(--lop-panel)] px-4 py-3 font-medium hover:bg-[var(--lop-panel-2)]"
+            className="rounded bg-secondary-dark px-6 py-3 text-center font-medium hover:bg-secondary"
           >
             Create account
           </Link>
@@ -62,11 +63,11 @@ function Feature({
   body: string;
 }) {
   return (
-    <div className="flex gap-3 rounded-xl border border-[var(--lop-border)] bg-[var(--lop-panel)] p-3">
-      <div className="mt-0.5 text-[var(--lop-accent)]">{icon}</div>
+    <div className="flex gap-3 rounded-xl bg-secondary-dark p-3">
+      <div className="mt-0.5 text-primary">{icon}</div>
       <div>
-        <div className="font-medium text-[var(--lop-text)]">{title}</div>
-        <div>{body}</div>
+        <div className="font-medium">{title}</div>
+        <div className="text-sm text-secondary-darker">{body}</div>
       </div>
     </div>
   );

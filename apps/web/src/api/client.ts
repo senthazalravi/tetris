@@ -36,7 +36,10 @@ export const api = {
       method: "PUT",
       credentials: "include",
       headers: { "Content-Type": "application/octet-stream" },
-      body: data,
+      body: data.buffer.slice(
+        data.byteOffset,
+        data.byteOffset + data.byteLength,
+      ) as ArrayBuffer,
     });
     return parse<{ ok: boolean }>(res);
   },
