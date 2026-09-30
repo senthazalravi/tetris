@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { useAuth } from "@/auth/AuthContext";
+import { onWipeLocal, unlockVault } from "@/crypto/vaultCrypto";
 
 export function UnlockPage() {
   const navigate = useNavigate();
@@ -17,6 +18,7 @@ export function UnlockPage() {
   const [busy, setBusy] = useState(false);
   const [remainingMs, setRemainingMs] = useState(0);
   const timedOutRef = useRef(false);
+  const finishingRef = useRef(false);
 
   useEffect(() => {
     if (!unlockExpiresAt) return;
@@ -30,22 +32,21 @@ export function UnlockPage() {
   if (unlockState === "unlocked") return <Navigate to="/app" replace />;
   if (!unlockChallengeId) return <Navigate to="/login" replace />;
 
-  async function submit(result: "SUCCESS" | "FAILURE") {
+  async function finish(result: "SUCCESS" | "FAILURE") {
+    if (finishingRef.current) return;
+    finishingRef.current = true;
     setBusy(true);
     setError(null);
     try {
-      await api.post("/auth/unlock", {
+      const res = await api.post<{ wiped?: boolean }>("/auth/unlock", {
         unlockChallengeId,
         result,
       });
-      if (result === "SUCCESS") {
-        markUnlocked();
-        navigate("/app");
-      } else {
-        markUnlocked();
-        navigate("/app");
-      }
+      if (res.wiped) await onWipeLocal();
+      markUnlocked();
+      navigate("/app");
     } catch (err) {
+      finishingRef.current = false;
       setError(err instanceof Error ? err.message : "Unlock failed");
     } finally {
       setBusy(false);
@@ -54,10 +55,8 @@ export function UnlockPage() {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
-    // Client vault verify lands with crypto package; for now one attempt is forwarded.
-    const stored = sessionStorage.getItem("lop.pendingPasscode");
-    const ok = stored ? passcode === stored : passcode.length >= 6;
-    await submit(ok ? "SUCCESS" : "FAILURE");
+    const ok = await unlockVault(passcode);
+    await finish(ok ? "SUCCESS" : "FAILURE");
   }
 
   useEffect(() => {
@@ -68,7 +67,7 @@ export function UnlockPage() {
       !timedOutRef.current
     ) {
       timedOutRef.current = true;
-      void submit("FAILURE");
+      void finish("FAILURE");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [remainingMs]);

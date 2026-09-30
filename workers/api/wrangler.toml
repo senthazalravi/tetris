@@ -17,5 +17,8 @@ bucket_name = "lop-attachments"
 APP_ORIGIN = "http://localhost:5173"
 COOKIE_SECURE = "false"
 
+[triggers]
+crons = ["0 * * * *"]
+
 [dev]
 port = 8787

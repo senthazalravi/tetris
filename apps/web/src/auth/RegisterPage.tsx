@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { useAuth } from "@/auth/AuthContext";
+import { setupVaultOnRegister } from "@/crypto/vaultCrypto";
 import type { SessionUser } from "@lop/types";
 
 export function RegisterPage() {
@@ -27,8 +28,7 @@ export function RegisterPage() {
         displayName,
         vaultPasscodeSetup: true,
       });
-      // Store vault passcode hint locally after first crypto vault lands in Chunk 3.
-      sessionStorage.setItem("lop.pendingPasscode", passcode);
+      await setupVaultOnRegister(passcode);
       setSession(res.user);
       markUnlocked();
       navigate("/app");

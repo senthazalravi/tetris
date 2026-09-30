@@ -3,11 +3,10 @@ import { cors } from "hono/cors";
 import type { Env } from "./env";
 import { authRoutes } from "./routes/auth";
 import { contactRoutes } from "./routes/contacts";
-import {
-  loadSessionUser,
-  readSessionToken,
-  type AppVars,
-} from "./lib/session";
+import { deviceRoutes } from "./routes/devices";
+import { messageRoutes } from "./routes/messages";
+import { runExpiryCleanup } from "./services/expiry";
+import type { AppVars } from "./lib/session";
 
 const app = new Hono<{ Bindings: Env; Variables: AppVars }>();
 
@@ -25,27 +24,26 @@ app.get("/api/v1/health", (c) =>
   c.json({ ok: true, service: "lop-api", time: Date.now() }),
 );
 
+app.post("/api/v1/internal/expiry-sweep", async (c) => {
+  const deleted = await runExpiryCleanup(c.env);
+  return c.json({ deleted });
+});
+
 app.route("/api/v1/auth", authRoutes);
 app.route("/api/v1", contactRoutes);
+app.route("/api/v1", deviceRoutes);
+app.route("/api/v1", messageRoutes);
 
 app.onError((err, c) => {
   console.error(err);
   return c.json({ error: "Internal error" }, 500);
 });
 
-export default app;
+export default {
+  fetch: app.fetch,
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(runExpiryCleanup(env));
+    void event;
+  },
+};
 
-/** Optional helper for authenticated routes. */
-export async function requireUser(c: {
-  env: Env;
-  req: { header: (n: string) => string | undefined };
-  set: (k: "user" | "session", v: unknown) => void;
-  json: (body: unknown, status?: number) => Response;
-}) {
-  const cookieHeader = c.req.header("Cookie");
-  // thin wrapper used by future routes — auth routes handle cookies directly
-  void cookieHeader;
-  const token = readSessionToken(c as never);
-  if (!token) return null;
-  return loadSessionUser(c.env, token);
-}
