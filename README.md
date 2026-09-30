@@ -30,7 +30,13 @@ npm run dev
 ```
 
 - Web: http://localhost:5173
-- API: http://localhost:8787
+- API: http://127.0.0.1:8787
+
+### Smoke test E2EE path
+
+```bash
+npx tsx scripts/e2ee-smoke.ts
+```
 
 ## Product rules
 

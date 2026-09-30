@@ -1,6 +1,7 @@
 export interface Env {
   DB: D1Database;
   ATTACHMENTS: R2Bucket;
+  USER_GATEWAY: DurableObjectNamespace;
   APP_ORIGIN: string;
   COOKIE_SECURE: string;
   SESSION_SECRET?: string;

@@ -25,4 +25,24 @@ export const api = {
       credentials: "include",
     }).then((r) => parse<T>(r));
   },
+  async putBinary(path: string, data: Uint8Array) {
+    const res = await fetch(`/api/v1${path}`, {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: data,
+    });
+    return parse<{ ok: boolean }>(res);
+  },
+  async getBinary(path: string): Promise<Uint8Array> {
+    const res = await fetch(`/api/v1${path}`, {
+      method: "GET",
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(data.error ?? `Request failed (${res.status})`);
+    }
+    return new Uint8Array(await res.arrayBuffer());
+  },
 };

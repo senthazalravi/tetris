@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useAuth } from "@/auth/AuthContext";
 import { api } from "@/api/client";
 import {
@@ -6,6 +6,14 @@ import {
   encryptOutgoing,
   getDeviceId,
 } from "@/crypto/vaultCrypto";
+import {
+  decodePayload,
+  decryptFile,
+  encodePayload,
+  encryptFile,
+  type ChatPayload,
+} from "@/crypto/attachments";
+import { useRealtime } from "@/realtime/useRealtime";
 
 interface ConversationRow {
   id: string;
@@ -21,7 +29,7 @@ interface ConversationRow {
 interface DecryptedMessage {
   id: string;
   senderUserId: string;
-  body: string;
+  payload: ChatPayload;
   createdAt: number;
   expiresAt: number;
   mine: boolean;
@@ -36,6 +44,7 @@ export function ChatShell() {
   const [lookup, setLookup] = useState("");
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const active = conversations.find((c) => c.id === activeId) ?? null;
 
@@ -50,49 +59,65 @@ export function ChatShell() {
     void refreshConversations().catch(() => undefined);
   }, [refreshConversations]);
 
-  const loadMessages = useCallback(async (conversation: ConversationRow) => {
-    if (!conversation.peer || !session) return;
-    const res = await api.get<{
-      messages: Array<{
-        id: string;
-        senderUserId: string;
-        ciphertext: string;
-        cryptoHeader: string;
-        createdAt: number;
-        expiresAt: number;
-      }>;
-    }>(`/conversations/${conversation.id}/messages`);
+  const loadMessages = useCallback(
+    async (conversation: ConversationRow) => {
+      if (!conversation.peer || !session) return;
+      const res = await api.get<{
+        messages: Array<{
+          id: string;
+          senderUserId: string;
+          ciphertext: string;
+          cryptoHeader: string;
+          createdAt: number;
+          expiresAt: number;
+        }>;
+      }>(`/conversations/${conversation.id}/messages`);
 
-    const decrypted: DecryptedMessage[] = [];
-    for (const m of res.messages) {
-      try {
-        const peerId =
-          m.senderUserId === session.id
-            ? conversation.peer.userId
-            : m.senderUserId;
-        // Own messages: we need session with peer to decrypt our own ciphertext too
-        const body = await decryptIncoming(peerId, m.cryptoHeader, m.ciphertext);
-        decrypted.push({
-          id: m.id,
-          senderUserId: m.senderUserId,
-          body,
-          createdAt: m.createdAt,
-          expiresAt: m.expiresAt,
-          mine: m.senderUserId === session.id,
-        });
-      } catch {
-        decrypted.push({
-          id: m.id,
-          senderUserId: m.senderUserId,
-          body: "[unable to decrypt]",
-          createdAt: m.createdAt,
-          expiresAt: m.expiresAt,
-          mine: m.senderUserId === session.id,
-        });
+      const decrypted: DecryptedMessage[] = [];
+      for (const m of res.messages) {
+        try {
+          const peerId =
+            m.senderUserId === session.id
+              ? conversation.peer.userId
+              : m.senderUserId;
+          const raw = await decryptIncoming(
+            peerId,
+            m.cryptoHeader,
+            m.ciphertext,
+          );
+          decrypted.push({
+            id: m.id,
+            senderUserId: m.senderUserId,
+            payload: decodePayload(raw),
+            createdAt: m.createdAt,
+            expiresAt: m.expiresAt,
+            mine: m.senderUserId === session.id,
+          });
+        } catch {
+          decrypted.push({
+            id: m.id,
+            senderUserId: m.senderUserId,
+            payload: { kind: "text", body: "[unable to decrypt]" },
+            createdAt: m.createdAt,
+            expiresAt: m.expiresAt,
+            mine: m.senderUserId === session.id,
+          });
+        }
       }
+      setMessages(decrypted);
+    },
+    [session],
+  );
+
+  useRealtime((data) => {
+    const evt = data as { type?: string; conversationId?: string };
+    if (evt.type === "message.new" && active && evt.conversationId === active.id) {
+      void loadMessages(active).catch(() => undefined);
     }
-    setMessages(decrypted);
-  }, [session]);
+    if (evt.type === "wipe.completed") {
+      window.location.href = "/app";
+    }
+  }, Boolean(session));
 
   useEffect(() => {
     if (!active) {
@@ -141,31 +166,87 @@ export function ChatShell() {
     }
   }
 
-  async function sendMessage(e: FormEvent) {
-    e.preventDefault();
-    if (!active?.peer || !draft.trim() || !session) return;
+  async function sendPayload(payload: ChatPayload) {
+    if (!active?.peer || !session) return;
     const deviceId = getDeviceId();
     if (!deviceId) {
       setLookupError("Device keys missing — re-register on this browser.");
       return;
     }
+    const envelope = await encryptOutgoing(
+      active.peer.userId,
+      encodePayload(payload),
+    );
+    const messageId = `msg_${crypto.randomUUID().replace(/-/g, "")}`;
+    await api.post(`/conversations/${active.id}/messages`, {
+      messageId,
+      deviceId,
+      communicationEpoch: session.communicationEpoch,
+      cryptoHeader: envelope.cryptoHeader,
+      ciphertext: envelope.ciphertext,
+    });
+    if (payload.kind === "file") {
+      await api.post(`/attachments/${payload.attachmentId}/complete`, {
+        messageId,
+      });
+    }
+    await loadMessages(active);
+  }
+
+  async function sendMessage(e: FormEvent) {
+    e.preventDefault();
+    if (!draft.trim()) return;
     const text = draft.trim();
     setDraft("");
     try {
-      const envelope = await encryptOutgoing(active.peer.userId, text);
-      const messageId = `msg_${crypto.randomUUID().replace(/-/g, "")}`;
-      await api.post(`/conversations/${active.id}/messages`, {
-        messageId,
-        deviceId,
-        communicationEpoch: session.communicationEpoch,
-        cryptoHeader: envelope.cryptoHeader,
-        ciphertext: envelope.ciphertext,
-      });
-      await loadMessages(active);
+      await sendPayload({ kind: "text", body: text });
     } catch (err) {
       setLookupError(err instanceof Error ? err.message : "Send failed");
       setDraft(text);
     }
+  }
+
+  async function onPickFile(file: File | null) {
+    if (!file || !active?.peer) return;
+    setBusy(true);
+    setLookupError(null);
+    try {
+      const encrypted = await encryptFile(file);
+      const token = await api.post<{
+        attachmentId: string;
+        uploadPath: string;
+      }>("/attachments/upload-token", { size: encrypted.ciphertext.byteLength });
+      await api.putBinary(
+        `/attachments/${token.attachmentId}/data`,
+        encrypted.ciphertext,
+      );
+      await sendPayload({
+        kind: "file",
+        name: encrypted.name,
+        mime: encrypted.mime,
+        attachmentId: token.attachmentId,
+        contentKeyB64: encrypted.contentKeyB64,
+      });
+    } catch (err) {
+      setLookupError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  async function downloadAttachment(payload: Extract<ChatPayload, { kind: "file" }>) {
+    const cipher = await api.getBinary(
+      `/attachments/${payload.attachmentId}/download`,
+    );
+    const plain = await decryptFile(cipher, payload.contentKeyB64);
+    const blob = new Blob([plain], { type: payload.mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = payload.name;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   function remainingLabel(expiresAt: number): string {
@@ -264,7 +345,17 @@ export function ChatShell() {
                       : "bg-[var(--lop-incoming)]"
                   }`}
                 >
-                  <div>{m.body}</div>
+                  {m.payload.kind === "text" ? (
+                    <div>{m.payload.body}</div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="underline"
+                      onClick={() => void downloadAttachment(m.payload)}
+                    >
+                      📎 {m.payload.name}
+                    </button>
+                  )}
                   <div className="mt-1 text-[10px] text-[var(--lop-muted)]">
                     {remainingLabel(m.expiresAt)} left
                   </div>
@@ -275,6 +366,20 @@ export function ChatShell() {
               onSubmit={sendMessage}
               className="flex gap-2 border-t border-[var(--lop-border)] bg-[var(--lop-panel)] p-3"
             >
+              <input
+                ref={fileRef}
+                type="file"
+                className="hidden"
+                onChange={(e) => void onPickFile(e.target.files?.[0] ?? null)}
+              />
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                className="rounded-lg border border-[var(--lop-border)] px-3 py-2 text-sm"
+                disabled={busy}
+              >
+                File
+              </button>
               <input
                 className="flex-1 rounded-lg border border-[var(--lop-border)] bg-[var(--lop-panel-2)] px-3 py-2 outline-none focus:border-[var(--lop-accent)]"
                 placeholder="Type a message"

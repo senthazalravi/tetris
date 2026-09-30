@@ -8,6 +8,19 @@ import {
 } from "../lib/session";
 import { randomId } from "../lib/crypto";
 
+async function pushToUser(env: Env, userId: string, payload: unknown) {
+  try {
+    const id = env.USER_GATEWAY.idFromName(userId);
+    const stub = env.USER_GATEWAY.get(id);
+    await stub.fetch("https://do/push", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    /* offline / local without DO is fine */
+  }
+}
+
 export const messageRoutes = new Hono<{ Bindings: Env; Variables: AppVars }>();
 
 function b64Decode(b64: string): Uint8Array {
@@ -236,6 +249,19 @@ messageRoutes.post("/conversations/:id/messages", async (c) => {
       .run();
   } catch {
     return c.json({ error: "Duplicate or invalid message id" }, 409);
+  }
+
+  const peers = await c.env.DB.prepare(
+    `SELECT user_id FROM conversation_members WHERE conversation_id = ? AND user_id != ?`,
+  )
+    .bind(conversationId, loaded.user.id)
+    .all<{ user_id: string }>();
+  for (const peer of peers.results ?? []) {
+    await pushToUser(c.env, peer.user_id, {
+      type: "message.new",
+      conversationId,
+      messageId: body.messageId,
+    });
   }
 
   return c.json({

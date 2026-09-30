@@ -13,6 +13,14 @@ migrations_dir = "../../db/migrations"
 binding = "ATTACHMENTS"
 bucket_name = "lop-attachments"
 
+[[durable_objects.bindings]]
+name = "USER_GATEWAY"
+class_name = "UserGateway"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["UserGateway"]
+
 [vars]
 APP_ORIGIN = "http://localhost:5173"
 COOKIE_SECURE = "false"
