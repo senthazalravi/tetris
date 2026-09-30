@@ -1,32 +1,44 @@
-name = "lop-api"
+name = "lop"
 main = "src/index.ts"
 compatibility_date = "2025-09-01"
 compatibility_flags = ["nodejs_compat"]
 
+# One Worker serves the API and the built web app, so cookies stay same-origin.
+[assets]
+directory = "../../apps/web/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
 [[d1_databases]]
 binding = "DB"
 database_name = "lop-db"
-database_id = "local-lop-db"
+# Replace with the id printed by `wrangler d1 create lop-db` before deploying.
+database_id = "00000000-0000-0000-0000-000000000000"
 migrations_dir = "../../db/migrations"
 
 [[r2_buckets]]
 binding = "ATTACHMENTS"
 bucket_name = "lop-attachments"
 
+# The free plan only supports SQLite-backed Durable Objects.
 [[durable_objects.bindings]]
 name = "USER_GATEWAY"
 class_name = "UserGateway"
 
 [[migrations]]
 tag = "v1"
-new_classes = ["UserGateway"]
+new_sqlite_classes = ["UserGateway"]
 
 [vars]
-APP_ORIGIN = "http://localhost:5173"
-COOKIE_SECURE = "false"
+COOKIE_SECURE = "true"
 
 [triggers]
-crons = ["0 * * * *"]
+# Every minute: enforces the 30s unlock timeout for abandoned logins and the 24h TTL.
+crons = ["* * * * *"]
+
+[observability]
+enabled = false
 
 [dev]
 port = 8787
