@@ -19,3 +19,6 @@ workers/api/dist/
 .vite/
 refs/
 docs/REFERENCE_NOTES.md
+
+.playwright-cli/
+output/
