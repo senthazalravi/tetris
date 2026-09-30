@@ -50,7 +50,14 @@ export interface VoteRef {
   choices: number[];
 }
 
-export type EnvelopeKind = "text" | "file" | "reaction" | "poll" | "vote";
+/** Replaces the text of the author's earlier message. `body` is the new text. */
+export interface EditRef {
+  target: string;
+}
+
+export const EDIT_BODY_MAX = 8000;
+
+export type EnvelopeKind = "text" | "file" | "reaction" | "poll" | "vote" | "edit";
 
 export interface MessageEnvelope {
   v: 1;
@@ -61,13 +68,14 @@ export interface MessageEnvelope {
   reaction?: ReactionRef;
   poll?: PollRef;
   vote?: VoteRef;
+  edit?: EditRef;
 }
 
 export function encodeEnvelope(e: MessageEnvelope): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(e));
 }
 
-const KINDS: readonly string[] = ["text", "file", "reaction", "poll", "vote"];
+const KINDS: readonly string[] = ["text", "file", "reaction", "poll", "vote", "edit"];
 
 export function decodeEnvelope(bytes: Uint8Array): MessageEnvelope {
   const parsed = JSON.parse(new TextDecoder().decode(bytes)) as MessageEnvelope;
@@ -105,6 +113,16 @@ export function decodeEnvelope(bytes: Uint8Array): MessageEnvelope {
       v.choices.some((n) => !Number.isInteger(n) || n < 0 || n >= POLL_MAX_OPTIONS)
     ) {
       throw new Error("Malformed vote");
+    }
+  }
+  if (parsed.kind === "edit") {
+    if (
+      !parsed.edit ||
+      typeof parsed.edit.target !== "string" ||
+      typeof parsed.body !== "string" ||
+      parsed.body.length > EDIT_BODY_MAX
+    ) {
+      throw new Error("Malformed edit");
     }
   }
   return parsed;

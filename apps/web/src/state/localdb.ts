@@ -27,6 +27,8 @@ export interface LocalMessage {
   unread?: boolean;
   /** userId → emoji. Only ever set on visible (text/file) messages. */
   reactions?: Record<string, string>;
+  /** When the author last edited this message (server-clocked). Shown as "Edited". */
+  editedAt?: number;
   /** userId → chosen option indexes. Only ever set on poll messages. */
   votes?: Record<string, number[]>;
   /** Outgoing: when the recipient's device received / read it (from the server). */

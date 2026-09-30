@@ -4,6 +4,9 @@ export const UNLOCK_WINDOW_MS = 30_000;
 /** Mandatory message + attachment lifetime, measured from server created_at. */
 export const MESSAGE_TTL_MS = 24 * 60 * 60 * 1000;
 
+/** How long after sending a message its author may still edit it. */
+export const EDIT_WINDOW_MS = 10 * 60 * 1000;
+
 /** An uploaded attachment that is never attached to a message is purged after this. */
 export const PENDING_ATTACHMENT_TTL_MS = 60 * 60 * 1000;
 

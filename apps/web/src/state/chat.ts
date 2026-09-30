@@ -12,6 +12,7 @@ import {
   type RatchetState,
 } from "@lop/crypto";
 import {
+  EDIT_BODY_MAX,
   POLL_MAX_OPTIONS,
   POLL_OPTION_MAX,
   POLL_QUESTION_MAX,
@@ -21,7 +22,7 @@ import {
   type MessageEnvelope,
   type ReplyRef,
 } from "@lop/protocol";
-import { MESSAGE_TTL_MS } from "@lop/config";
+import { EDIT_WINDOW_MS, MESSAGE_TTL_MS } from "@lop/config";
 import type {
   ContactDto,
   ConversationDto,
@@ -75,6 +76,8 @@ interface ChatState {
   activeId: string | null;
   typing: Record<string, number>;
   replyTo: Record<string, LocalMessage | null>;
+  /** The message currently being edited in each conversation's composer. */
+  editing: Record<string, LocalMessage | null>;
   /** Private, device-local nicknames: peer userId → name. Never sent anywhere. */
   nicknames: Record<string, string>;
   toast: string | null;
@@ -89,6 +92,7 @@ export const useChat = create<ChatState>(() => ({
   activeId: null,
   typing: {},
   replyTo: {},
+  editing: {},
   nicknames: {},
   toast: null,
 }));
@@ -252,6 +256,7 @@ export function stopEngine() {
     activeId: null,
     typing: {},
     replyTo: {},
+    editing: {},
     nicknames: {},
     toast: null,
   });
@@ -591,12 +596,15 @@ async function handleSyncMessage(m: SyncMessage): Promise<LocalMessage | null> {
       createdAt: m.createdAt,
       expiresAt: m.expiresAt,
       state: "delivered",
-      unread: !visible && content.kind !== "reaction" && content.kind !== "vote",
+      unread: !visible && content.kind !== "reaction" && content.kind !== "vote" && content.kind !== "edit",
       content,
     };
     await saveAndShow(msg);
     if (content.kind === "reaction" && content.reaction) {
       await applyReaction(m.conversationId, content.reaction.target, m.senderUserId, content.reaction.emoji);
+    }
+    if (content.kind === "edit" && content.edit) {
+      await applyEdit(m.conversationId, content.edit.target, m.senderUserId, content.body, m.createdAt);
     }
     if (content.kind === "vote" && content.vote) {
       await applyVote(m.conversationId, content.vote.target, m.senderUserId, content.vote.choices);
@@ -904,7 +912,84 @@ export async function sendReaction(convId: string, targetId: string, emoji: stri
 
 /** Kinds that show up as a bubble (reactions and votes are invisible carriers). */
 function isVisibleKind(kind: string) {
+  // (edits, like reactions and votes, are invisible carriers)
   return kind === "text" || kind === "file" || kind === "poll";
+}
+
+/* ---------------- editing ---------------- */
+
+/** Slack for clock/network skew between the two timestamps we compare. */
+const EDIT_SLACK_MS = 15_000;
+
+/** Can the author still edit this message right now? */
+export function canEditMessage(m: LocalMessage, now = Date.now()): boolean {
+  if (m.direction !== "out" || m.deleted) return false;
+  if (m.state === "sending" || m.state === "failed") return false;
+  const c = m.content;
+  const editable = c.kind === "text" || (c.kind === "file" && Boolean(c.body));
+  return editable && now - m.createdAt < EDIT_WINDOW_MS;
+}
+
+export function setEditing(convId: string, m: LocalMessage | null) {
+  set((s) => ({
+    editing: { ...s.editing, [convId]: m },
+    // Editing and replying are mutually exclusive in the composer.
+    replyTo: m ? { ...s.replyTo, [convId]: null } : s.replyTo,
+  }));
+}
+
+/**
+ * Apply an edit. `at` is the server time the edit was accepted, so both people
+ * judge the 10-minute window against the same server clock, not the sender's.
+ */
+async function applyEdit(convId: string, targetId: string, authorId: string, body: string, at: number) {
+  const target = localMessage(convId, targetId);
+  if (!target || target.deleted || target.senderId !== authorId) return;
+  const c = target.content;
+  if (c.kind !== "text" && c.kind !== "file") return;
+  if (c.kind === "text" && !body.trim()) return;
+  if (at - target.createdAt > EDIT_WINDOW_MS + EDIT_SLACK_MS) return;
+  if (target.editedAt && at <= target.editedAt) return;
+  await saveAndShow({ ...target, editedAt: at, content: { ...c, body } });
+}
+
+export async function sendEdit(convId: string, targetId: string, text: string) {
+  const conv = convFor(convId);
+  const target = localMessage(convId, targetId);
+  const body = text.trim();
+  setEditing(convId, null);
+  if (!conv || !target) return;
+  if (conv.blocked) {
+    toast("Unblock this contact to edit messages.");
+    return;
+  }
+  if (!canEditMessage(target)) {
+    toast("You can only edit a message for 10 minutes after sending it.");
+    return;
+  }
+  const c = target.content;
+  if (c.kind !== "text" && c.kind !== "file") return;
+  if (!body && c.kind === "text") return;
+  if (body === c.body) return;
+  if (body.length > EDIT_BODY_MAX) {
+    toast("That message is too long.");
+    return;
+  }
+  const now = Date.now();
+  await applyEdit(convId, targetId, me(), body, now);
+  const msg: LocalMessage = {
+    id: newMessageId(),
+    convId,
+    senderId: me(),
+    direction: "out",
+    createdAt: now,
+    // An edit disappears with the message it changes.
+    expiresAt: Math.max(target.expiresAt, now + 60_000),
+    state: "sending",
+    content: { v: 1, kind: "edit", body, edit: { target: targetId } },
+  };
+  await saveAndShow(msg);
+  await deliver(msg);
 }
 
 /* ---------------- polls ---------------- */
