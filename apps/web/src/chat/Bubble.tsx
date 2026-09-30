@@ -9,6 +9,7 @@ import {
   Copy,
   CornerUpLeft,
   Info,
+  Pencil,
   Plus,
   RotateCw,
   ShieldAlert,
@@ -17,10 +18,12 @@ import {
 import { formatTime, linkify } from "@/lib/format";
 import type { LocalMessage } from "@/state/localdb";
 import {
+  canEditMessage,
   deleteForEveryone,
   deleteForMe,
   retryMessage,
   sendReaction,
+  setEditing,
   setReplyTo,
   toast,
 } from "@/state/chat";
@@ -126,7 +129,7 @@ function BubbleImpl({
     };
   }, [menu, close]);
 
-  if (c.kind === "reaction" || c.kind === "vote") return null;
+  if (c.kind === "reaction" || c.kind === "vote" || c.kind === "edit") return null;
 
   if (c.kind === "system") {
     return (
@@ -227,6 +230,11 @@ function BubbleImpl({
             bare ? "px-1.5 pb-0.5" : ""
           }`}
         >
+          {m.editedAt && (
+            <span className="italic" title={`Edited ${formatTime(m.editedAt)}`}>
+              Edited
+            </span>
+          )}
           <span>{time}</span>
           {out && <Ticks state={m.state} />}
         </span>
@@ -305,6 +313,11 @@ function BubbleImpl({
             <MenuItem icon={CornerUpLeft} onClick={() => setReplyTo(m.convId, m)} done={close}>
               Reply
             </MenuItem>
+            {canEditMessage(m) && (
+              <MenuItem icon={Pencil} onClick={() => setEditing(m.convId, m)} done={close}>
+                Edit
+              </MenuItem>
+            )}
             {text && (
               <MenuItem icon={Copy} onClick={() => void copy()} done={close}>
                 Copy text

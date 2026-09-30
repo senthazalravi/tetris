@@ -41,7 +41,7 @@ function previewOf(m: LocalMessage | undefined): string {
     return c.body || (c.attachment?.voice ? "Voice message" : c.attachment?.name) || "Attachment";
   }
   if (c.kind === "poll") return `Poll: ${c.poll?.question ?? ""}`;
-  if (c.kind === "reaction" || c.kind === "vote") return "";
+  if (c.kind === "reaction" || c.kind === "vote" || c.kind === "edit") return "";
   return c.body;
 }
 
@@ -64,7 +64,7 @@ export function Sidebar({ onNew, onProfile }: { onNew: () => void; onProfile: ()
     return conversations
       .map((c) => {
         const list = messages[c.id] ?? [];
-        const last = [...list].reverse().find((m) => m.content.kind !== "system" && m.content.kind !== "reaction" && m.content.kind !== "vote");
+        const last = [...list].reverse().find((m) => m.content.kind !== "system" && m.content.kind !== "reaction" && m.content.kind !== "vote" && m.content.kind !== "edit");
         const unread = list.filter((m) => m.unread).length;
         return { c, last, unread, at: last?.createdAt ?? c.lastMessageAt };
       })

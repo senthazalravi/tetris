@@ -11,12 +11,14 @@ import {
 import {
   BarChart3,
   Camera,
+  Check,
   FileText,
   Headphones,
   Image as ImageIcon,
   Mic,
   Music,
   Paperclip,
+  Pencil,
   SendHorizontal,
   Smile,
   Trash2,
@@ -26,7 +28,17 @@ import {
 import type { ConversationDto } from "@lop/types";
 import { formatBytes } from "@/lib/format";
 import { attachmentProblem, mediaKind, mimeOf } from "@/lib/media";
-import { nameOf, sendMessage, setReplyTo, stopTyping, toast, typingPing, useChat } from "@/state/chat";
+import {
+  nameOf,
+  sendEdit,
+  sendMessage,
+  setEditing,
+  setReplyTo,
+  stopTyping,
+  toast,
+  typingPing,
+  useChat,
+} from "@/state/chat";
 import { useSession } from "@/state/session";
 import { IconButton } from "@/ui/kit";
 import { useOutside } from "@/ui/hooks";
@@ -76,6 +88,7 @@ export function Composer({
   const myId = useSession((s) => s.user?.id);
   const reply = useChat((s) => s.replyTo[conv.id] ?? null);
   const peerName = nameOf(useChat((s) => s.nicknames), conv.peer);
+  const editing = useChat((s) => s.editing[conv.id] ?? null);
   const [text, setText] = useState("");
   const [emoji, setEmoji] = useState(false);
   const [menu, setMenu] = useState(false);
@@ -113,6 +126,26 @@ export function Composer({
     if (reply) area.current?.focus();
   }, [reply]);
 
+  // Start editing: load the message text into the box and drop any staged file.
+  const editingId = editing?.id;
+  useEffect(() => {
+    if (!editing) return;
+    onFile(null);
+    setText(editing.content.kind === "text" || editing.content.kind === "file" ? editing.content.body : "");
+    requestAnimationFrame(() => {
+      const el = area.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingId, conv.id]);
+
+  function cancelEdit() {
+    setEditing(conv.id, null);
+    setText("");
+  }
+
   useLayoutEffect(() => {
     const el = area.current;
     if (!el) return;
@@ -134,10 +167,16 @@ export function Composer({
     [onFile],
   );
 
-  const canSend = Boolean(text.trim() || file);
+  const canSend = editing ? Boolean(text.trim()) : Boolean(text.trim() || file);
 
   function submit() {
     if (!canSend) return;
+    if (editing) {
+      void sendEdit(conv.id, editing.id, text);
+      setText("");
+      requestAnimationFrame(() => area.current?.focus());
+      return;
+    }
     void sendMessage(conv.id, { text, file, replyTo: reply });
     setText("");
     onFile(null);
@@ -149,6 +188,8 @@ export function Composer({
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       submit();
+    } else if (e.key === "Escape" && editing) {
+      cancelEdit();
     } else if (e.key === "Escape" && reply) {
       setReplyTo(conv.id, null);
     }
@@ -210,6 +251,21 @@ export function Composer({
             <div className="truncate text-muted">{replyText}</div>
           </div>
           <button onClick={() => setReplyTo(conv.id, null)} aria-label="Cancel reply" className="text-muted hover:text-fg">
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
+      {editing && (
+        <div className="fade-in mb-2 flex items-start gap-3 rounded-xl border-l-[3px] border-pop bg-s2 px-3 py-2">
+          <Pencil size={15} className="mt-0.5 shrink-0 text-pop" />
+          <div className="min-w-0 flex-1 text-[13px]">
+            <div className="font-semibold text-pop">Editing message</div>
+            <div className="truncate text-muted">
+              {editing.content.kind === "text" || editing.content.kind === "file" ? editing.content.body : ""}
+            </div>
+          </div>
+          <button onClick={cancelEdit} aria-label="Cancel edit" className="text-muted hover:text-fg">
             <X size={16} />
           </button>
         </div>
@@ -345,13 +401,14 @@ export function Composer({
             className="max-h-40 min-h-11 flex-1 resize-none rounded-2xl border border-line bg-s2 px-4 py-2.5 text-[15px] leading-snug outline-none transition placeholder:text-faint focus:border-pop focus:ring-4 focus:ring-pop/15"
           />
 
-          {canSend ? (
+          {canSend || editing ? (
             <button
               onClick={submit}
-              aria-label="Send"
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent text-onaccent shadow-[0_8px_24px_-10px_var(--pop)] transition hover:brightness-110 active:scale-95"
+              disabled={!canSend}
+              aria-label={editing ? "Save edit" : "Send"}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent text-onaccent shadow-[0_8px_24px_-10px_var(--pop)] transition hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:shadow-none"
             >
-              <SendHorizontal size={19} />
+              {editing ? <Check size={20} strokeWidth={2.6} /> : <SendHorizontal size={19} />}
             </button>
           ) : (
             <button
