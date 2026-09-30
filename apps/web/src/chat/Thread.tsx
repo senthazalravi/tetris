@@ -28,7 +28,7 @@ export function Thread({ conv }: { conv: ConversationDto }) {
   const stick = useRef(true);
   const dragDepth = useRef(0);
 
-  const isTyping = typing !== undefined && typing > now - 6000;
+  const isTyping = typing !== undefined && typing > Date.now();
 
   useEffect(() => {
     setFile(null);

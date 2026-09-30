@@ -1092,12 +1092,15 @@ export function setReplyTo(convId: string, m: LocalMessage | null) {
 
 const typingSent = new Map<string, number>();
 const typingTimers = new Map<string, number>();
+let typingChain: Promise<void> = Promise.resolve();
 
 export function typingPing(convId: string) {
   const now = Date.now();
   if (now - (typingSent.get(convId) ?? 0) > 3000) {
     typingSent.set(convId, now);
-    void api.post(`/conversations/${convId}/typing`, { active: true }).catch(() => {});
+    typingChain = typingChain
+      .then(() => api.post(`/conversations/${convId}/typing`, { active: true }))
+      .then(() => {}, () => {});
   }
   window.clearTimeout(typingTimers.get(convId));
   typingTimers.set(
@@ -1111,7 +1114,10 @@ export function stopTyping(convId: string) {
   typingTimers.delete(convId);
   if (typingSent.has(convId)) {
     typingSent.delete(convId);
-    void api.post(`/conversations/${convId}/typing`, { active: false }).catch(() => {});
+    // Chain after any in-flight ping so "stopped" can't be overtaken by "typing".
+    typingChain = typingChain
+      .then(() => api.post(`/conversations/${convId}/typing`, { active: false }))
+      .then(() => {}, () => {});
   }
 }
 

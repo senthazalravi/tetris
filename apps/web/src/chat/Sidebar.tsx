@@ -155,7 +155,7 @@ export function Sidebar({ onNew, onProfile }: { onNew: () => void; onProfile: ()
           <ul>
             {rows.map(({ c, last, unread, at }) => {
               const active = c.id === activeId;
-              const isTyping = (typing[c.id] ?? 0) > now - 6000;
+              const isTyping = (typing[c.id] ?? 0) > Date.now();
               const mine = last?.direction === "out" && !last.deleted;
               const onContext = (e: MouseEvent) => {
                 e.preventDefault();
