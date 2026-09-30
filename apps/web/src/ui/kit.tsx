@@ -6,7 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import { Loader2, X } from "lucide-react";
-import { hueFor, initials } from "@/lib/format";
+import { createAvatar } from "@usespaceui/avatars";
 
 /* ---------------- brand ---------------- */
 
@@ -20,7 +20,7 @@ export function LoopMark({ size = 28, className = "" }: { size?: number; classNa
         strokeWidth="7"
         strokeLinecap="round"
       />
-      <circle cx="49" cy="15" r="5" fill="var(--pop)" />
+      <circle cx="49" cy="15" r="5" fill="#d4ff3a" />
     </svg>
   );
 }
@@ -41,6 +41,47 @@ export function Wordmark({ size = 26 }: { size?: number }) {
 
 /* ---------------- avatar ---------------- */
 
+const squiggleCache = new Map<string, string>();
+
+/**
+ * Some squiggle faces come out with a repeated attribute (two `fill`s on one
+ * tag), which is invalid XML, so browsers refuse to draw them. Keep the last.
+ */
+function dedupeAttributes(svg: string): string {
+  return svg.replace(/<[a-zA-Z][^>]*>/g, (tag) => {
+    const seen = new Map<string, string>();
+    const attrs = /\s([\w:-]+)="[^"]*"/g;
+    for (const m of tag.matchAll(attrs)) seen.set(m[1]!, m[0]);
+    const name = /^<[a-zA-Z][\w:-]*/.exec(tag)![0];
+    const selfClose = /\/>$/.test(tag) ? " />" : ">";
+    return name + [...seen.values()].join("") + selfClose;
+  });
+}
+
+/** Deterministic "squiggle" avatar for any seed, as an inline SVG data URL. */
+export function squiggleUrl(seed: string): string {
+  let url = squiggleCache.get(seed);
+  if (!url) {
+    const raw = createAvatar({ name: seed, variant: "squiggle", size: 256 }) as unknown as string;
+    const svg = dedupeAttributes(raw);
+    url = `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+    squiggleCache.set(seed, url);
+  }
+  return url;
+}
+
+/** Hand-picked seeds offered in the profile picker (all the squiggle style). */
+export const SQUIGGLE_PRESETS = [
+  "orbit",
+  "ember",
+  "tide",
+  "moss",
+  "dusk",
+  "bloom",
+  "frost",
+  "saffron",
+] as const;
+
 export function Avatar({
   name,
   seed,
@@ -52,35 +93,19 @@ export function Avatar({
   url?: string | null;
   size?: number;
 }) {
-  const hue = hueFor(seed);
-  if (url) {
-    return (
-      <img
-        src={url}
-        alt=""
-        width={size}
-        height={size}
-        className="shrink-0 rounded-full object-cover"
-        style={{ width: size, height: size }}
-      />
-    );
-  }
   return (
-    <div
-      className="flex shrink-0 select-none items-center justify-center rounded-full font-display font-bold text-white"
-      style={{
-        width: size,
-        height: size,
-        fontSize: size * 0.38,
-        background: `linear-gradient(140deg, hsl(${hue} 62% 52%), hsl(${(hue + 40) % 360} 58% 38%))`,
-      }}
-      aria-hidden
-    >
-      {initials(name)}
-    </div>
+    <img
+      src={url || squiggleUrl(seed)}
+      alt=""
+      aria-label={name}
+      width={size}
+      height={size}
+      draggable={false}
+      className="shrink-0 select-none rounded-full bg-s3 object-cover"
+      style={{ width: size, height: size }}
+    />
   );
 }
-
 /* ---------------- controls ---------------- */
 
 type BtnProps = ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -109,7 +134,7 @@ export function Button({
   }[size];
   const variants = {
     primary:
-      "bg-accent text-onaccent shadow-[0_8px_24px_-10px_var(--pop)] hover:brightness-110",
+      "bg-accent text-onaccent shadow-[0_8px_24px_-10px_var(--pop)] hover:brightness-110 disabled:bg-s4 disabled:text-muted disabled:opacity-100 disabled:shadow-none",
     soft: "bg-s3 text-fg hover:bg-s4",
     ghost: "text-muted hover:bg-s3 hover:text-fg",
     danger: "bg-danger/15 text-danger hover:bg-danger/25",
@@ -266,29 +291,7 @@ export function Ring({
   );
 }
 
-/** Small "vanishes in" indicator on bubbles. */
-export function LifeDot({ fraction }: { fraction: number }) {
-  const size = 12;
-  const r = 4.5;
-  const c = 2 * Math.PI * r;
-  return (
-    <svg width={size} height={size} className="-rotate-90 opacity-70" aria-hidden>
-      <circle cx={6} cy={6} r={r} fill="none" stroke="currentColor" strokeOpacity={0.25} strokeWidth={1.6} />
-      <circle
-        cx={6}
-        cy={6}
-        r={r}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.6}
-        strokeLinecap="round"
-        strokeDasharray={c}
-        strokeDashoffset={c * (1 - Math.max(0, Math.min(1, fraction)))}
-      />
-    </svg>
-  );
-}
-
 export function Spinner({ size = 18 }: { size?: number }) {
   return <Loader2 size={size} className="spin text-muted" />;
 }
+
