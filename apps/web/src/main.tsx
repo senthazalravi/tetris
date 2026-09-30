@@ -1,16 +1,13 @@
+import "@fontsource-variable/bricolage-grotesque";
+import "@fontsource-variable/geist";
+import "@fontsource-variable/geist-mono";
+import "./index.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter } from "react-router-dom";
-import { App } from "./app/App";
-import "./index.css";
+import { App } from "./App";
 
-const root = document.getElementById("root");
-if (!root) throw new Error("root element missing");
-
-createRoot(root).render(
+createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <BrowserRouter>
-      <App />
-    </BrowserRouter>
+    <App />
   </StrictMode>,
 );
