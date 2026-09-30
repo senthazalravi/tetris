@@ -31,6 +31,7 @@ import type {
 import { api, ApiError, getVaultToken } from "@/lib/api";
 import { newMessageId } from "@/lib/format";
 import { imageMeta, mediaKind, mimeOf } from "@/lib/media";
+import { armIncomingSounds, disarmIncomingSounds, playIncomingTone } from "@/lib/notify";
 import type { LocalMessage, LocalState, MessageContent } from "./localdb";
 import { saveKeys, vault } from "./vault";
 import { useSession } from "./session";
@@ -216,6 +217,8 @@ export async function startEngine() {
   set({ ready: true });
 
   await syncNow();
+  // History catch-up above stays silent; live messages from here on can chime.
+  armIncomingSounds();
   connectSocket();
   pollTimer = window.setInterval(() => void syncNow(), 25_000);
   pruneTimer = window.setInterval(() => void pruneExpired(), 30_000);
@@ -239,6 +242,7 @@ export function stopEngine() {
   attUrls.clear();
   attCache.clear();
   pendingFiles.clear();
+  disarmIncomingSounds();
   set({
     ready: false,
     connection: "connecting",
@@ -500,7 +504,17 @@ async function syncPass() {
     if (!res.hasMore) break;
   }
   if (needConversations) await refreshConversations();
-  if (newIncoming.length) await acknowledge(newIncoming);
+  if (newIncoming.length) {
+    await acknowledge(newIncoming);
+    const audible = newIncoming.some(
+      (m) =>
+        m.content.kind === "text" ||
+        m.content.kind === "file" ||
+        m.content.kind === "poll" ||
+        m.content.kind === "undecryptable",
+    );
+    if (audible) playIncomingTone();
+  }
 }
 
 async function handleSyncMessage(m: SyncMessage): Promise<LocalMessage | null> {
