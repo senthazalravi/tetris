@@ -21,7 +21,6 @@ import { vaultGet, vaultSet, wipeLocalCommunicationState } from "@/storage/vault
 const SALT_KEY = "vault.salt";
 const WRAPPED_KEYS = "vault.deviceKeys";
 const DEVICE_ID = "vault.deviceId";
-const PASSCODE_VERIFIER = "vault.passcodeOk";
 
 let memoryVaultKey: Uint8Array | null = null;
 let memoryKeys: DeviceKeys | null = null;
@@ -30,6 +29,10 @@ const sessions = new Map<string, SessionState>();
 
 export function getDeviceId(): string | null {
   return memoryDeviceId;
+}
+
+export function hasVaultKeys(): boolean {
+  return Boolean(memoryKeys && memoryDeviceId);
 }
 
 export async function setupVaultOnRegister(passcode: string): Promise<void> {
@@ -48,26 +51,23 @@ export async function setupVaultOnRegister(passcode: string): Promise<void> {
   await vaultSet(SALT_KEY, toBase64(salt));
   await vaultSet(WRAPPED_KEYS, wrapped);
   await vaultSet(DEVICE_ID, res.deviceId);
-  await vaultSet(PASSCODE_VERIFIER, "1");
 
   memoryVaultKey = vaultKey;
   memoryKeys = keys;
   memoryDeviceId = res.deviceId;
-  sessionStorage.setItem("lop.pendingPasscode", passcode);
 }
 
 export async function unlockVault(passcode: string): Promise<boolean> {
   const saltB64 = await vaultGet(SALT_KEY);
   const wrapped = await vaultGet(WRAPPED_KEYS);
   const deviceId = await vaultGet(DEVICE_ID);
-  if (!saltB64 || !wrapped || !deviceId) {
-    // No local vault (new browser) — accept passcode length and continue empty
-    if (passcode.length < 6) return false;
-    memoryDeviceId = null;
-    memoryKeys = null;
-    memoryVaultKey = null;
+
+  // New browser / cleared storage: create a fresh local vault + publish device keys.
+  if (!saltB64 || !wrapped) {
+    await ensureDeviceReady(passcode);
     return true;
   }
+
   try {
     const vaultKey = await deriveVaultKey(passcode, fromBase64(saltB64));
     const keys = unwrapDeviceKeys(vaultKey, wrapped);
@@ -80,6 +80,35 @@ export async function unlockVault(passcode: string): Promise<boolean> {
   }
 }
 
+/** After unlock/register, ensure a published device exists for this browser. */
+export async function ensureDeviceReady(passcode: string): Promise<string> {
+  if (memoryKeys && memoryDeviceId) return memoryDeviceId;
+
+  const saltB64 = await vaultGet(SALT_KEY);
+  let vaultKey = memoryVaultKey;
+  if (!vaultKey) {
+    const salt = saltB64 ? fromBase64(saltB64) : generateSalt();
+    if (!saltB64) await vaultSet(SALT_KEY, toBase64(salt));
+    vaultKey = await deriveVaultKey(passcode, salt);
+    memoryVaultKey = vaultKey;
+  }
+
+  const keys = memoryKeys ?? createDeviceKeys();
+  memoryKeys = keys;
+  const wrapped = wrapDeviceKeys(vaultKey, keys);
+  await vaultSet(WRAPPED_KEYS, wrapped);
+
+  const bundle = exportPublicBundle(keys);
+  const res = await api.post<{ deviceId: string }>("/devices", {
+    identityPublicKey: bundle.identityPublicKey,
+    signedPrekeyId: bundle.signedPrekeyId,
+    signedPrekeyPublicKey: bundle.signedPrekeyPublicKey,
+  });
+  memoryDeviceId = res.deviceId;
+  await vaultSet(DEVICE_ID, res.deviceId);
+  return res.deviceId;
+}
+
 export async function onWipeLocal(): Promise<void> {
   memoryVaultKey = null;
   memoryKeys = null;
@@ -89,7 +118,7 @@ export async function onWipeLocal(): Promise<void> {
 }
 
 function requireKeys(): DeviceKeys {
-  if (!memoryKeys) throw new Error("Vault locked");
+  if (!memoryKeys) throw new Error("Vault locked — unlock with your passcode");
   return memoryKeys;
 }
 
@@ -99,13 +128,21 @@ export async function ensureSessionWithPeer(
   const existing = sessions.get(peerUserId);
   if (existing) return existing;
 
+  const stored = await vaultGet(`session.${peerUserId}`);
+  if (stored) {
+    const parsed = JSON.parse(stored) as SessionState & {
+      bootstrap?: Record<string, string>;
+    };
+    sessions.set(peerUserId, parsed);
+    return parsed;
+  }
+
   const keys = requireKeys();
   const bundle = await api.get<PublicKeyBundle & { deviceId: string }>(
     `/users/${peerUserId}/key-bundle`,
   );
   const { session, ephemeralPublicKey } = initiateSession(keys, bundle);
   session.peerUserId = peerUserId;
-  // Persist bootstrap material for recipient in header on first message
   (session as SessionState & { bootstrap?: unknown }).bootstrap = {
     ephemeralPublicKey,
     senderIdentityPublicKey: exportPublicBundle(keys).identityPublicKey,
@@ -119,12 +156,16 @@ export async function encryptOutgoing(
   peerUserId: string,
   text: string,
 ): Promise<{ cryptoHeader: string; ciphertext: string }> {
-  let session = sessions.get(peerUserId) ?? (await ensureSessionWithPeer(peerUserId));
-  const bootstrap = (session as SessionState & { bootstrap?: Record<string, string> })
-    .bootstrap;
+  const session =
+    sessions.get(peerUserId) ?? (await ensureSessionWithPeer(peerUserId));
+  const bootstrap = (
+    session as SessionState & { bootstrap?: Record<string, string> }
+  ).bootstrap;
   const { envelope, nextSession } = encryptText(session, text, bootstrap ?? {});
-  if (bootstrap) {
-    delete (nextSession as SessionState & { bootstrap?: unknown }).bootstrap;
+  // Keep bootstrap on session until peer has acknowledged — include on every
+  // message until we know they have the session (first few messages).
+  if (bootstrap && session.sendChain < 3) {
+    (nextSession as SessionState & { bootstrap?: unknown }).bootstrap = bootstrap;
   }
   sessions.set(peerUserId, nextSession);
   await vaultSet(`session.${peerUserId}`, JSON.stringify(nextSession));
@@ -154,6 +195,7 @@ export async function decryptIncoming(
     );
     session.peerUserId = peerUserId;
     sessions.set(peerUserId, session);
+    await vaultSet(`session.${peerUserId}`, JSON.stringify(session));
   }
   if (!session) {
     const stored = await vaultGet(`session.${peerUserId}`);

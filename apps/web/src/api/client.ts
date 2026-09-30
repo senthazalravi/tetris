@@ -25,6 +25,12 @@ export const api = {
       credentials: "include",
     }).then((r) => parse<T>(r));
   },
+  delete<T>(path: string) {
+    return fetch(`/api/v1${path}`, {
+      method: "DELETE",
+      credentials: "include",
+    }).then((r) => parse<T>(r));
+  },
   async putBinary(path: string, data: Uint8Array) {
     const res = await fetch(`/api/v1${path}`, {
       method: "PUT",

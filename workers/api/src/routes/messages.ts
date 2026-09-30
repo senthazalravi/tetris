@@ -257,10 +257,21 @@ messageRoutes.post("/conversations/:id/messages", async (c) => {
     .bind(conversationId, loaded.user.id)
     .all<{ user_id: string }>();
   for (const peer of peers.results ?? []) {
+    // Keep peer membership + contact so the chat appears on their side.
+    await c.env.DB.prepare(
+      `INSERT OR IGNORE INTO contacts (owner_user_id, contact_user_id, display_alias, created_at, blocked)
+       VALUES (?, ?, NULL, ?, 0)`,
+    )
+      .bind(peer.user_id, loaded.user.id, now)
+      .run();
     await pushToUser(c.env, peer.user_id, {
       type: "message.new",
       conversationId,
       messageId: body.messageId,
+    });
+    await pushToUser(c.env, peer.user_id, {
+      type: "conversation.refresh",
+      conversationId,
     });
   }
 
@@ -317,4 +328,94 @@ messageRoutes.get("/conversations/:id/messages", async (c) => {
       deliveryState: m.delivery_state,
     })),
   });
+});
+
+messageRoutes.post("/messages/:id/ack", async (c) => {
+  const loaded = await authed(c);
+  if (!loaded) return c.json({ error: "Unauthorized" }, 401);
+
+  const messageId = c.req.param("id");
+  const body = await c.req.json<{ state?: "delivered" | "read" }>();
+  if (body.state !== "delivered" && body.state !== "read") {
+    return c.json({ error: "Invalid state" }, 400);
+  }
+
+  const msg = await c.env.DB.prepare(
+    `SELECT id, conversation_id, sender_user_id, delivery_state FROM messages WHERE id = ?`,
+  )
+    .bind(messageId)
+    .first<{
+      id: string;
+      conversation_id: string;
+      sender_user_id: string;
+      delivery_state: string;
+    }>();
+  if (!msg) return c.json({ error: "Not found" }, 404);
+  if (msg.sender_user_id === loaded.user.id) {
+    return c.json({ ok: true, deliveryState: msg.delivery_state });
+  }
+
+  const member = await c.env.DB.prepare(
+    `SELECT 1 as ok FROM conversation_members WHERE conversation_id = ? AND user_id = ?`,
+  )
+    .bind(msg.conversation_id, loaded.user.id)
+    .first();
+  if (!member) return c.json({ error: "Forbidden" }, 403);
+
+  const rank = { accepted: 0, delivered: 1, read: 2 } as Record<string, number>;
+  if ((rank[body.state] ?? 0) > (rank[msg.delivery_state] ?? 0)) {
+    await c.env.DB.prepare(
+      `UPDATE messages SET delivery_state = ? WHERE id = ?`,
+    )
+      .bind(body.state, messageId)
+      .run();
+    await pushToUser(c.env, msg.sender_user_id, {
+      type: body.state === "read" ? "message.read" : "message.delivered",
+      messageId,
+      conversationId: msg.conversation_id,
+    });
+  }
+
+  return c.json({ ok: true, deliveryState: body.state });
+});
+
+messageRoutes.delete("/messages/:id", async (c) => {
+  const loaded = await authed(c);
+  if (!loaded) return c.json({ error: "Unauthorized" }, 401);
+  const messageId = c.req.param("id");
+  const scope = c.req.query("scope") ?? "me"; // me | everyone
+
+  const msg = await c.env.DB.prepare(
+    `SELECT id, conversation_id, sender_user_id FROM messages WHERE id = ?`,
+  )
+    .bind(messageId)
+    .first<{ id: string; conversation_id: string; sender_user_id: string }>();
+  if (!msg) return c.json({ error: "Not found" }, 404);
+
+  if (scope === "everyone") {
+    if (msg.sender_user_id !== loaded.user.id) {
+      return c.json({ error: "Only sender can delete for everyone" }, 403);
+    }
+    await c.env.DB.prepare(`DELETE FROM messages WHERE id = ?`)
+      .bind(messageId)
+      .run();
+    const peers = await c.env.DB.prepare(
+      `SELECT user_id FROM conversation_members WHERE conversation_id = ?`,
+    )
+      .bind(msg.conversation_id)
+      .all<{ user_id: string }>();
+    for (const peer of peers.results ?? []) {
+      await pushToUser(c.env, peer.user_id, {
+        type: "message.deleted",
+        messageId,
+        conversationId: msg.conversation_id,
+      });
+    }
+    return c.json({ ok: true });
+  }
+
+  // delete for me: mark via tombstone in ciphertext not available — soft-hide client-side;
+  // for shared DB we replace ciphertext with empty deleted marker for this user only is hard.
+  // MVP: if sender, delete for everyone; else client hides locally.
+  return c.json({ ok: true, localOnly: true });
 });

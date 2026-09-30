@@ -185,6 +185,26 @@ authRoutes.get("/session", async (c) => {
   return c.json({ user: publicUser(loaded.user) });
 });
 
+/** Create a wipe-capable unlock challenge (used after password login). */
+authRoutes.post("/challenge", async (c) => {
+  const token = readSessionToken(c);
+  if (!token) return c.json({ error: "Unauthorized" }, 401);
+  const loaded = await loadSessionUser(c.env, token);
+  if (!loaded) return c.json({ error: "Unauthorized" }, 401);
+
+  const now = Date.now();
+  const challengeId = randomId("ulc");
+  const unlockExpiresAt = now + UNLOCK_WINDOW_MS;
+  await c.env.DB.prepare(
+    `INSERT INTO unlock_challenges (id, user_id, session_id, started_at, expires_at, attempt_used, outcome, completed_at)
+     VALUES (?, ?, ?, ?, ?, 0, NULL, NULL)`,
+  )
+    .bind(challengeId, loaded.user.id, loaded.session.id, now, unlockExpiresAt)
+    .run();
+
+  return c.json({ unlockChallengeId: challengeId, unlockExpiresAt });
+});
+
 authRoutes.post("/unlock", async (c) => {
   const token = readSessionToken(c);
   if (!token) return c.json({ error: "Unauthorized" }, 401);

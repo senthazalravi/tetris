@@ -27,13 +27,19 @@ export async function decryptFile(
 }
 
 export type ChatPayload =
-  | { kind: "text"; body: string }
+  | {
+      kind: "text";
+      body: string;
+      replyTo?: { id: string; body: string; senderName: string };
+      edited?: boolean;
+    }
   | {
       kind: "file";
       name: string;
       mime: string;
       attachmentId: string;
       contentKeyB64: string;
+      replyTo?: { id: string; body: string; senderName: string };
     };
 
 export function encodePayload(p: ChatPayload): string {
