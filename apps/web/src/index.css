@@ -18,17 +18,17 @@
   --fg: #eef1f3;
   --muted: #98a1aa;
   --faint: #626a73;
-  --accent: #d4ff3a;
-  --on-accent: #0a0d03;
-  --pop: #d4ff3a;
+  --accent: #0b7f61;
+  --on-accent: #ffffff;
+  --pop: #3ee0b0;
   --danger: #ff6464;
   --warn: #ffb547;
-  --bout: #d4ff3a;
-  --bout-fg: #0a0d03;
-  --bout-soft: rgba(10, 13, 3, 0.62);
+  --bout: #0a6b53;
+  --bout-fg: #ffffff;
+  --bout-soft: rgba(255, 255, 255, 0.78);
   --bin: #1b1f24;
   --bin-fg: #eef1f3;
-  --tick-read: #0a5c46;
+  --tick-read: #86dcff;
   --dot: rgba(255, 255, 255, 0.045);
   --shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.7);
 }
@@ -45,17 +45,17 @@
   --fg: #14150e;
   --muted: #62655a;
   --faint: #9a9c90;
-  --accent: #14150e;
-  --on-accent: #d4ff3a;
-  --pop: #a5d100;
+  --accent: #0b7f61;
+  --on-accent: #ffffff;
+  --pop: #0a7a5c;
   --danger: #d23636;
   --warn: #c77a00;
-  --bout: #14150e;
-  --bout-fg: #f4f1e8;
-  --bout-soft: rgba(244, 241, 232, 0.6);
+  --bout: #0a6b53;
+  --bout-fg: #ffffff;
+  --bout-soft: rgba(255, 255, 255, 0.78);
   --bin: #ffffff;
   --bin-fg: #14150e;
-  --tick-read: #d4ff3a;
+  --tick-read: #86dcff;
   --dot: rgba(24, 24, 14, 0.07);
   --shadow: 0 30px 70px -25px rgba(40, 38, 20, 0.35);
 }
@@ -312,3 +312,6 @@ button:disabled {
     transition-duration: 0.001ms !important;
   }
 }
+
+
+/* ---------- expiry ring ---------- */
