@@ -15,6 +15,11 @@ import {
   type ChatPayload,
 } from "@/crypto/attachments";
 import { useRealtime } from "@/realtime/useRealtime";
+import {
+  broadcastSessionEvent,
+  useIdleVaultLock,
+  useMultiTabSync,
+} from "@/hooks/sessionGuards";
 
 interface ConversationRow {
   id: string;
@@ -66,7 +71,7 @@ function initials(name: string): string {
 }
 
 export function ChatShell() {
-  const { session, clearAuth } = useAuth();
+  const { session, clearAuth, beginSoftUnlock } = useAuth();
   const [conversations, setConversations] = useState<ConversationRow[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<DecryptedMessage[]>([]);
@@ -83,8 +88,43 @@ export function ChatShell() {
   } | null>(null);
   const [infoMsg, setInfoMsg] = useState<DecryptedMessage | null>(null);
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
+  const [peerTyping, setPeerTyping] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const typingTimer = useRef<number | null>(null);
+  const peerTypingClear = useRef<number | null>(null);
+
+  const softLock = useCallback(() => {
+    broadcastSessionEvent("lock");
+    beginSoftUnlock();
+  }, [beginSoftUnlock]);
+
+  useIdleVaultLock(Boolean(session), softLock, 5 * 60_000);
+  useMultiTabSync({
+    onLock: () => beginSoftUnlock(),
+    onWipe: () => {
+      clearAuth();
+      window.location.href = "/";
+    },
+  });
+
+  // Soft-lock when tab is hidden for a while (ephemeral-browser pattern)
+  useEffect(() => {
+    let hideTimer: number | null = null;
+    const onVis = () => {
+      if (document.hidden) {
+        hideTimer = window.setTimeout(softLock, 60_000);
+      } else if (hideTimer) {
+        window.clearTimeout(hideTimer);
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      if (hideTimer) window.clearTimeout(hideTimer);
+    };
+  }, [softLock]);
 
   const active = useMemo(
     () => conversations.find((c) => c.id === activeId) ?? null,
@@ -188,6 +228,7 @@ export function ChatShell() {
       type?: string;
       conversationId?: string;
       messageId?: string;
+      displayName?: string;
     };
     if (evt.type === "conversation.refresh") {
       void refreshConversations().catch(() => undefined);
@@ -204,6 +245,14 @@ export function ChatShell() {
     }
     if (evt.type === "message.new") {
       void refreshConversations().catch(() => undefined);
+    }
+    if (evt.type === "typing.start" && active && evt.conversationId === active.id) {
+      setPeerTyping(true);
+      if (peerTypingClear.current) window.clearTimeout(peerTypingClear.current);
+      peerTypingClear.current = window.setTimeout(() => setPeerTyping(false), 1500);
+    }
+    if (evt.type === "typing.stop" && active && evt.conversationId === active.id) {
+      setPeerTyping(false);
     }
   }, Boolean(session));
 
@@ -225,7 +274,21 @@ export function ChatShell() {
     return () => window.removeEventListener("click", close);
   }, []);
 
+  function emitTyping() {
+    if (!activeId) return;
+    void api
+      .post(`/conversations/${activeId}/typing`, { active: true })
+      .catch(() => undefined);
+    if (typingTimer.current) window.clearTimeout(typingTimer.current);
+    typingTimer.current = window.setTimeout(() => {
+      void api
+        .post(`/conversations/${activeId}/typing`, { active: false })
+        .catch(() => undefined);
+    }, 1200);
+  }
+
   async function logout() {
+    broadcastSessionEvent("wipe");
     try {
       await api.post("/auth/logout", {});
     } catch {
@@ -510,7 +573,9 @@ export function ChatShell() {
                 <div>
                   <div className="font-medium">{active.peer?.displayName}</div>
                   <div className="text-xs text-[var(--lop-muted)]">
-                    @{active.peer?.username}
+                    {peerTyping
+                      ? "typing…"
+                      : `@${active.peer?.username}`}
                   </div>
                 </div>
               </div>
@@ -569,6 +634,16 @@ export function ChatShell() {
                   </div>
                 </div>
               ))}
+              {peerTyping && (
+                <div className="flex items-center gap-2 px-1 py-1 text-xs text-[var(--lop-muted)]">
+                  <span className="inline-flex gap-1">
+                    <i className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--lop-accent)] [animation-delay:0ms]" />
+                    <i className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--lop-accent)] [animation-delay:150ms]" />
+                    <i className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--lop-accent)] [animation-delay:300ms]" />
+                  </span>
+                  {active.peer?.displayName} is typing
+                </div>
+              )}
             </div>
 
             {(replyTo || editing) && (
@@ -618,10 +693,14 @@ export function ChatShell() {
                 ＋
               </button>
               <input
+                ref={inputRef}
                 className="flex-1 rounded-lg bg-[var(--lop-panel-2)] px-3 py-2.5 outline-none"
                 placeholder="Type a message"
                 value={draft}
-                onChange={(e) => setDraft(e.target.value)}
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  emitTyping();
+                }}
               />
               <button
                 type="submit"
@@ -646,6 +725,7 @@ export function ChatShell() {
               setReplyTo(menu.message);
               setEditing(null);
               setMenu(null);
+              window.setTimeout(() => inputRef.current?.focus(), 0);
             }}
           />
           <MenuItem

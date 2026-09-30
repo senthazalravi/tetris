@@ -54,8 +54,11 @@ export function UnlockPage() {
         unlockChallengeId,
         result,
       });
-      if (res.wiped) await onWipeLocal();
-      else await ensureDeviceReady(passcode);
+      if (res.wiped) {
+        const { broadcastSessionEvent } = await import("@/hooks/sessionGuards");
+        broadcastSessionEvent("wipe");
+        await onWipeLocal();
+      } else await ensureDeviceReady(passcode);
       markUnlocked();
       navigate("/app");
     } catch (err) {

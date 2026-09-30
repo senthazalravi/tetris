@@ -247,6 +247,13 @@ messageRoutes.post("/conversations/:id/messages", async (c) => {
         expiresAt,
       )
       .run();
+
+    // Bump conversation ordering for chat list
+    await c.env.DB.prepare(
+      `UPDATE conversations SET created_at = ? WHERE id = ?`,
+    )
+      .bind(now, conversationId)
+      .run();
   } catch {
     return c.json({ error: "Duplicate or invalid message id" }, 409);
   }

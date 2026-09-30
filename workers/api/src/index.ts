@@ -5,6 +5,7 @@ import { authRoutes } from "./routes/auth";
 import { contactRoutes } from "./routes/contacts";
 import { deviceRoutes } from "./routes/devices";
 import { attachmentRoutes } from "./routes/attachments";
+import { presenceRoutes } from "./routes/presence";
 import { messageRoutes } from "./routes/messages";
 import { runExpiryCleanup } from "./services/expiry";
 import { rateLimit, securityHeaders } from "./middleware/security";
@@ -87,6 +88,7 @@ app.route("/api/v1", contactRoutes);
 app.route("/api/v1", deviceRoutes);
 app.route("/api/v1", messageRoutes);
 app.route("/api/v1", attachmentRoutes);
+app.route("/api/v1", presenceRoutes);
 
 app.onError((err, c) => {
   console.error(err);

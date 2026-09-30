@@ -17,3 +17,4 @@ coverage/
 apps/web/dist/
 workers/api/dist/
 .vite/
+refs/
