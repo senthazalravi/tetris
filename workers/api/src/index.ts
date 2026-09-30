@@ -1,104 +1,85 @@
-import { Hono } from "hono";
-import { cors } from "hono/cors";
+﻿import { Hono } from "hono";
 import type { Env } from "./env";
 import { authRoutes } from "./routes/auth";
+import { userRoutes } from "./routes/users";
 import { contactRoutes } from "./routes/contacts";
 import { deviceRoutes } from "./routes/devices";
-import { attachmentRoutes } from "./routes/attachments";
-import { presenceRoutes } from "./routes/presence";
 import { messageRoutes } from "./routes/messages";
-import { runExpiryCleanup } from "./services/expiry";
-import { rateLimit, securityHeaders } from "./middleware/security";
+import { attachmentRoutes } from "./routes/attachments";
 import {
-  loadSessionUser,
+  hasValidVaultToken,
+  loadSession,
+  originGuard,
   readSessionToken,
-  type AppVars,
+  type AppEnv,
 } from "./lib/session";
+import { runExpiryCleanup } from "./services/expiry";
+import { sweepAllChallenges } from "./services/challenges";
 import { UserGateway } from "./realtime/UserGateway";
 
 export { UserGateway };
 
-const app = new Hono<{ Bindings: Env; Variables: AppVars }>();
+const app = new Hono<AppEnv>();
 
-app.use("*", securityHeaders);
-
-app.use(
-  "*",
-  cors({
-    origin: (origin, c) => origin || c.env.APP_ORIGIN || "*",
-    credentials: true,
-    allowHeaders: ["Content-Type"],
-    allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  }),
-);
-
-app.use(
-  "/api/v1/auth/login",
-  rateLimit({
-    key: (c) => `login:${c.req.header("cf-connecting-ip") ?? "local"}`,
-    limit: 20,
-    windowMs: 60_000,
-  }),
-);
-
-app.use(
-  "/api/v1/auth/register",
-  rateLimit({
-    key: (c) => `reg:${c.req.header("cf-connecting-ip") ?? "local"}`,
-    limit: 10,
-    windowMs: 60_000,
-  }),
-);
-
-app.use(
-  "/api/v1/users/lookup",
-  rateLimit({
-    key: (c) => `lookup:${c.req.header("cf-connecting-ip") ?? "local"}`,
-    limit: 30,
-    windowMs: 60_000,
-  }),
-);
-
-app.get("/api/v1/health", (c) =>
-  c.json({ ok: true, service: "lop-api", time: Date.now() }),
-);
-
-app.post("/api/v1/internal/expiry-sweep", async (c) => {
-  const deleted = await runExpiryCleanup(c.env);
-  return c.json({ deleted });
+app.use("/api/*", async (c, next) => {
+  await next();
+  c.res.headers.set("Cache-Control", c.res.headers.get("Cache-Control") ?? "no-store");
+  c.res.headers.set("X-Content-Type-Options", "nosniff");
+  c.res.headers.set("Referrer-Policy", "no-referrer");
 });
+app.use("/api/*", originGuard);
 
-app.get("/api/v1/ws", async (c) => {
-  const upgrade = c.req.header("Upgrade");
-  if (upgrade !== "websocket") {
-    return c.json({ error: "Expected websocket" }, 426);
+app.get("/api/v1/health", (c) => c.json({ ok: true, time: Date.now() }));
+
+/**
+ * Live event channel. Needs the session cookie AND this tab's vault token.
+ * Served outside Hono on purpose: a 101 response carries a webSocket that must
+ * reach the runtime untouched, and header middleware would rebuild it.
+ */
+async function handleWebSocket(request: Request, env: Env): Promise<Response> {
+  const json = (error: string, status: number) =>
+    Response.json({ error }, { status, headers: { "Cache-Control": "no-store" } });
+  if (request.headers.get("Upgrade") !== "websocket") {
+    return json("Expected a WebSocket upgrade", 426);
   }
-  const token = readSessionToken(c);
-  if (!token) return c.json({ error: "Unauthorized" }, 401);
-  const loaded = await loadSessionUser(c.env, token);
-  if (!loaded) return c.json({ error: "Unauthorized" }, 401);
-
-  const id = c.env.USER_GATEWAY.idFromName(loaded.user.id);
-  const stub = c.env.USER_GATEWAY.get(id);
-  return stub.fetch("https://do/ws", c.req.raw);
-});
+  const token = readSessionToken({ header: (n) => request.headers.get(n) ?? undefined });
+  const loaded = token ? await loadSession(env, token) : null;
+  if (!loaded) return json("Not signed in", 401);
+  const ok = await hasValidVaultToken(
+    env,
+    new URL(request.url).searchParams.get("vt"),
+    loaded.session.id,
+  );
+  if (!ok) return json("Vault is locked", 403);
+  const stub = env.USER_GATEWAY.get(env.USER_GATEWAY.idFromName(loaded.user.id));
+  return stub.fetch("https://gateway/ws", request);
+}
 
 app.route("/api/v1/auth", authRoutes);
+app.route("/api/v1", userRoutes);
 app.route("/api/v1", contactRoutes);
 app.route("/api/v1", deviceRoutes);
 app.route("/api/v1", messageRoutes);
 app.route("/api/v1", attachmentRoutes);
-app.route("/api/v1", presenceRoutes);
 
+app.notFound((c) => c.json({ error: "Not found" }, 404));
 app.onError((err, c) => {
-  console.error(err);
-  return c.json({ error: "Internal error" }, 500);
+  console.error("unhandled", err instanceof Error ? err.message : "error");
+  return c.json({ error: "Something went wrong" }, 500);
 });
 
 export default {
-  fetch: app.fetch,
-  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(runExpiryCleanup(env));
-    void event;
+  fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    if (new URL(request.url).pathname === "/api/v1/ws") return handleWebSocket(request, env);
+    return app.fetch(request, env, ctx);
   },
-};
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(
+      (async () => {
+        await sweepAllChallenges(env);
+        await runExpiryCleanup(env);
+      })(),
+    );
+  },
+} satisfies ExportedHandler<Env>;
+

@@ -1,131 +1,107 @@
 import { Hono } from "hono";
-import { MAX_ATTACHMENT_BYTES, MESSAGE_TTL_MS } from "@lop/config";
-import type { Env } from "../env";
 import {
-  loadSessionUser,
-  readSessionToken,
-  type AppVars,
-} from "../lib/session";
-import { randomId } from "../lib/crypto";
+  MAX_ATTACHMENT_BYTES,
+  MAX_USER_ATTACHMENT_BYTES,
+  PENDING_ATTACHMENT_TTL_MS,
+} from "@lop/config";
+import { requireUnlocked, type AppEnv } from "../lib/session";
+import { hit } from "../lib/ratelimit";
+import { randomId } from "../lib/util";
 
-export const attachmentRoutes = new Hono<{ Bindings: Env; Variables: AppVars }>();
+export const attachmentRoutes = new Hono<AppEnv>();
 
-async function authed(c: {
-  env: Env;
-  req: { header: (n: string) => string | undefined };
-}) {
-  const token = readSessionToken(c as never);
-  if (!token) return null;
-  return loadSessionUser(c.env, token);
+/** AES-GCM adds a 12-byte nonce + 16-byte tag. */
+const CIPHER_OVERHEAD = 28;
+
+async function isMember(
+  db: D1Database,
+  convId: string,
+  userId: string,
+  epoch: number,
+): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT 1 AS x FROM conversation_members
+       WHERE conversation_id = ? AND user_id = ? AND communication_epoch = ?`,
+    )
+    .bind(convId, userId, epoch)
+    .first();
+  return Boolean(row);
 }
 
-attachmentRoutes.post("/attachments/upload-token", async (c) => {
-  const loaded = await authed(c);
-  if (!loaded) return c.json({ error: "Unauthorized" }, 401);
-
-  const body = await c.req.json<{ size?: number }>();
-  const size = body.size ?? 0;
-  if (size <= 0 || size > MAX_ATTACHMENT_BYTES) {
-    return c.json({ error: "Invalid attachment size" }, 400);
+/** Upload one already-encrypted blob. The server cannot read it. */
+attachmentRoutes.put("/conversations/:id/attachments", requireUnlocked, async (c) => {
+  const me = c.get("user");
+  const convId = c.req.param("id");
+  if (!(await hit(c.env, `upload:${me.id}`, 40, 60_000))) {
+    return c.json({ error: "Uploading too fast" }, 429);
+  }
+  if (!(await isMember(c.env.DB, convId, me.id, me.communication_epoch))) {
+    return c.json({ error: "Not a member of this conversation" }, 403);
+  }
+  const declared = Number(c.req.header("content-length") ?? 0);
+  if (declared > MAX_ATTACHMENT_BYTES + CIPHER_OVERHEAD) {
+    return c.json({ error: "File too large (25 MB max)" }, 413);
+  }
+  const bytes = new Uint8Array(await c.req.arrayBuffer());
+  if (bytes.byteLength <= CIPHER_OVERHEAD || bytes.byteLength > MAX_ATTACHMENT_BYTES + CIPHER_OVERHEAD) {
+    return c.json({ error: "File too large (25 MB max)" }, 413);
   }
 
-  const attachmentId = randomId("att");
-  const objectKey = `${loaded.user.id}/${attachmentId}`;
-  const expiresAt = Date.now() + MESSAGE_TTL_MS;
-
-  // Placeholder row until complete — message_id filled on complete
-  await c.env.DB.prepare(
-    `INSERT INTO attachments (id, message_id, object_key, ciphertext_size, expires_at)
-     VALUES (?, '', ?, ?, ?)`,
+  const used = await c.env.DB.prepare(
+    `SELECT COALESCE(SUM(size), 0) AS total FROM attachments WHERE owner_user_id = ?`,
   )
-    .bind(attachmentId, objectKey, size, expiresAt)
-    .run();
-
-  return c.json({
-    attachmentId,
-    objectKey,
-    uploadPath: `/api/v1/attachments/${attachmentId}/data`,
-    expiresAt,
-  });
-});
-
-attachmentRoutes.put("/attachments/:id/data", async (c) => {
-  const loaded = await authed(c);
-  if (!loaded) return c.json({ error: "Unauthorized" }, 401);
-
-  const id = c.req.param("id");
-  const row = await c.env.DB.prepare(
-    `SELECT id, object_key, ciphertext_size FROM attachments WHERE id = ?`,
-  )
-    .bind(id)
-    .first<{ id: string; object_key: string; ciphertext_size: number }>();
-  if (!row) return c.json({ error: "Not found" }, 404);
-  if (!row.object_key.startsWith(`${loaded.user.id}/`)) {
-    return c.json({ error: "Forbidden" }, 403);
+    .bind(me.id)
+    .first<{ total: number }>();
+  if ((used?.total ?? 0) + bytes.byteLength > MAX_USER_ATTACHMENT_BYTES) {
+    return c.json({ error: "Attachment quota reached. It frees up as files expire." }, 413);
   }
 
-  const buf = new Uint8Array(await c.req.arrayBuffer());
-  if (buf.byteLength === 0 || buf.byteLength > MAX_ATTACHMENT_BYTES) {
-    return c.json({ error: "Invalid body size" }, 400);
-  }
-
-  await c.env.ATTACHMENTS.put(row.object_key, buf, {
+  const id = randomId("att");
+  const key = `att/${convId}/${id}`;
+  await c.env.ATTACHMENTS.put(key, bytes, {
     httpMetadata: { contentType: "application/octet-stream" },
   });
-
+  const now = Date.now();
   await c.env.DB.prepare(
-    `UPDATE attachments SET ciphertext_size = ? WHERE id = ?`,
+    `INSERT INTO attachments (id, owner_user_id, conversation_id, message_id, object_key, size, created_at, expires_at)
+     VALUES (?, ?, ?, NULL, ?, ?, ?, ?)`,
   )
-    .bind(buf.byteLength, id)
+    .bind(id, me.id, convId, key, bytes.byteLength, now, now + PENDING_ATTACHMENT_TTL_MS)
     .run();
-
-  return c.json({ ok: true, ciphertextSize: buf.byteLength });
+  return c.json({ attachmentId: id, size: bytes.byteLength }, 201);
 });
 
-attachmentRoutes.post("/attachments/:id/complete", async (c) => {
-  const loaded = await authed(c);
-  if (!loaded) return c.json({ error: "Unauthorized" }, 401);
-
-  const id = c.req.param("id");
-  const body = await c.req.json<{ messageId?: string }>();
-  if (!body.messageId) return c.json({ error: "messageId required" }, 400);
-
+attachmentRoutes.get("/attachments/:id", requireUnlocked, async (c) => {
+  const me = c.get("user");
   const row = await c.env.DB.prepare(
-    `SELECT id, object_key FROM attachments WHERE id = ?`,
+    `SELECT owner_user_id, conversation_id, message_id, object_key, expires_at
+     FROM attachments WHERE id = ?`,
   )
-    .bind(id)
-    .first<{ id: string; object_key: string }>();
-  if (!row || !row.object_key.startsWith(`${loaded.user.id}/`)) {
+    .bind(c.req.param("id"))
+    .first<{
+      owner_user_id: string;
+      conversation_id: string;
+      message_id: string | null;
+      object_key: string;
+      expires_at: number;
+    }>();
+  if (!row) return c.json({ error: "Not found" }, 404);
+  if (row.expires_at <= Date.now()) return c.json({ error: "This file has expired" }, 410);
+  if (!(await isMember(c.env.DB, row.conversation_id, me.id, me.communication_epoch))) {
     return c.json({ error: "Not found" }, 404);
   }
-
-  await c.env.DB.prepare(`UPDATE attachments SET message_id = ? WHERE id = ?`)
-    .bind(body.messageId, id)
-    .run();
-
-  return c.json({ ok: true });
-});
-
-attachmentRoutes.get("/attachments/:id/download", async (c) => {
-  const loaded = await authed(c);
-  if (!loaded) return c.json({ error: "Unauthorized" }, 401);
-
-  const id = c.req.param("id");
-  const row = await c.env.DB.prepare(
-    `SELECT object_key, expires_at FROM attachments WHERE id = ?`,
-  )
-    .bind(id)
-    .first<{ object_key: string; expires_at: number }>();
-  if (!row) return c.json({ error: "Not found" }, 404);
-  if (row.expires_at <= Date.now()) return c.json({ error: "Expired" }, 410);
-
+  if (!row.message_id && row.owner_user_id !== me.id) {
+    return c.json({ error: "Not found" }, 404);
+  }
   const obj = await c.env.ATTACHMENTS.get(row.object_key);
-  if (!obj) return c.json({ error: "Missing object" }, 404);
-
+  if (!obj) return c.json({ error: "This file has expired" }, 410);
   return new Response(obj.body, {
     headers: {
       "Content-Type": "application/octet-stream",
+      "Content-Length": String(obj.size),
       "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
     },
   });
 });
