@@ -13,7 +13,7 @@ Runs entirely on Cloudflare's free plan: one Worker (API + static app), D1, R2 a
 | Unlock gate | Every page open (including refresh) creates or resumes a server-clocked 30 s challenge. One attempt. The session cookie alone unlocks nothing: data endpoints also need a per-tab vault token held only in memory. |
 | Wipe | Wrong passcode, timeout, or an abandoned challenge (tab closed, enforced by cron) deletes contacts, chats, keys and pending messages server-side, and the local database on the device. Account and profile survive; the user sets a new vault. |
 | Messages | X3DH + Double Ratchet (AES-256-GCM). The server only holds ciphertext. `expires_at = created_at + 24h`; reads filter on it and cron deletes rows and R2 objects. |
-| Attachments | Random per-file key, encrypted in the browser, ciphertext in R2, key travels inside the E2EE message. Images, video, audio, PDFs, any file up to 25 MB. |
+| Attachments | Random per-file key, encrypted in the browser, ciphertext in R2, key travels inside the E2EE message. Any file type: photos, PDFs and documents up to 90 MB (Workers free plan body limit), videos up to 16 MB. Voice messages are recorded on-device. Polls and votes travel as ratcheted messages too. |
 | Finding people | Exact `@username` only. No directory, no fuzzy search. Contacts are private per user. |
 | Extras | Replies, delivery/read ticks, typing, delete for me / for everyone, block, safety numbers, light/dark themes. |
 
