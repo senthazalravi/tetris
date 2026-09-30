@@ -1,91 +1,80 @@
-import type { Env } from "../env";
-import { randomId } from "../lib/crypto";
 import type { WipeReason } from "@lop/types";
+import type { Env } from "../env";
+import { pushToUser } from "../lib/push";
+import { randomId } from "../lib/util";
 
+/**
+ * Communication wipe: contacts, conversation membership and the inbox go away,
+ * the account (profile, password, username) stays. The vault is left unset so
+ * the next screen forces a fresh passcode + fresh device keys for the new epoch.
+ *
+ * Idempotent: the epoch compare-and-swap makes concurrent calls a no-op.
+ * Peers keep their own copies until the 24h TTL removes them.
+ */
 export async function runCommunicationWipe(
   env: Env,
   userId: string,
   reason: WipeReason,
-): Promise<{ fromEpoch: number; toEpoch: number; wipeOperationId: string }> {
+): Promise<{ toEpoch: number } | null> {
   const user = await env.DB.prepare(
     `SELECT communication_epoch FROM users WHERE id = ?`,
   )
     .bind(userId)
     .first<{ communication_epoch: number }>();
-  if (!user) throw new Error("User not found");
+  if (!user) return null;
 
   const fromEpoch = user.communication_epoch;
   const toEpoch = fromEpoch + 1;
   const now = Date.now();
-  const wipeOperationId = randomId("wipe");
 
-  // Bump epoch first so concurrent writes with old epoch fail.
-  await env.DB.prepare(
-    `UPDATE users SET communication_epoch = ?, updated_at = ? WHERE id = ?`,
+  const cas = await env.DB.prepare(
+    `UPDATE users
+       SET communication_epoch = ?1, vault_salt = NULL, vault_verifier_hash = NULL, updated_at = ?2
+     WHERE id = ?3 AND communication_epoch = ?4`,
   )
-    .bind(toEpoch, now, userId)
+    .bind(toEpoch, now, userId, fromEpoch)
     .run();
+  if (!cas.meta.changes) return null;
 
-  await env.DB.prepare(
-    `INSERT INTO wipe_operations (id, user_id, reason, requested_at, completed_at, status, from_epoch, to_epoch)
-     VALUES (?, ?, ?, ?, ?, 'completed', ?, ?)`,
-  )
-    .bind(wipeOperationId, userId, reason, now, now, fromEpoch, toEpoch)
-    .run();
-
-  await env.DB.prepare(`DELETE FROM contacts WHERE owner_user_id = ?`)
-    .bind(userId)
-    .run();
-
-  const memberships = await env.DB.prepare(
-    `SELECT conversation_id FROM conversation_members WHERE user_id = ?`,
+  // Uploaded-but-unsent attachments never reach a peer: destroy them outright.
+  const orphaned = await env.DB.prepare(
+    `SELECT id, object_key FROM attachments WHERE owner_user_id = ? AND message_id IS NULL`,
   )
     .bind(userId)
-    .all<{ conversation_id: string }>();
-
-  for (const row of memberships.results ?? []) {
-    const convId = row.conversation_id;
-    const messages = await env.DB.prepare(
-      `SELECT id FROM messages WHERE conversation_id = ? AND sender_user_id = ?`,
-    )
-      .bind(convId, userId)
-      .all<{ id: string }>();
-    for (const msg of messages.results ?? []) {
-      const attachments = await env.DB.prepare(
-        `SELECT id, object_key FROM attachments WHERE message_id = ?`,
-      )
-        .bind(msg.id)
-        .all<{ id: string; object_key: string }>();
-      for (const att of attachments.results ?? []) {
-        try {
-          await env.ATTACHMENTS.delete(att.object_key);
-        } catch {
-          /* best effort */
-        }
-        await env.DB.prepare(`DELETE FROM attachments WHERE id = ?`)
-          .bind(att.id)
-          .run();
-      }
-      await env.DB.prepare(`DELETE FROM messages WHERE id = ?`).bind(msg.id).run();
+    .all<{ id: string; object_key: string }>();
+  for (const att of orphaned.results ?? []) {
+    try {
+      await env.ATTACHMENTS.delete(att.object_key);
+    } catch {
+      // The expiry sweep retries anything left behind.
     }
-    await env.DB.prepare(
-      `DELETE FROM conversation_members WHERE conversation_id = ? AND user_id = ?`,
-    )
-      .bind(convId, userId)
-      .run();
   }
 
-  await env.DB.prepare(
-    `DELETE FROM direct_pairs WHERE user_a = ? OR user_b = ?`,
-  )
-    .bind(userId, userId)
-    .run();
+  await env.DB.batch([
+    env.DB.prepare(
+      `DELETE FROM attachments WHERE owner_user_id = ? AND message_id IS NULL`,
+    ).bind(userId),
+    env.DB.prepare(
+      `DELETE FROM prekeys WHERE device_id IN (SELECT id FROM devices WHERE user_id = ?)`,
+    ).bind(userId),
+    env.DB.prepare(
+      `UPDATE devices SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL`,
+    ).bind(now, userId),
+    env.DB.prepare(`DELETE FROM contacts WHERE owner_user_id = ?`).bind(userId),
+    env.DB.prepare(`DELETE FROM conversation_members WHERE user_id = ?`).bind(userId),
+    env.DB.prepare(`DELETE FROM messages WHERE recipient_user_id = ?`).bind(userId),
+    env.DB.prepare(`DELETE FROM unlocks WHERE user_id = ?`).bind(userId),
+    // Other still-pending challenges must not wipe the *new* epoch later.
+    env.DB.prepare(
+      `UPDATE unlock_challenges SET attempt_used = 1, outcome = 'SUPERSEDED', completed_at = ?
+       WHERE user_id = ? AND outcome IS NULL`,
+    ).bind(now, userId),
+    env.DB.prepare(
+      `INSERT INTO wipe_operations (id, user_id, reason, from_epoch, to_epoch, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).bind(randomId("wipe"), userId, reason, fromEpoch, toEpoch, now),
+  ]);
 
-  await env.DB.prepare(
-    `UPDATE devices SET revoked_at = ?, communication_epoch = ? WHERE user_id = ? AND revoked_at IS NULL`,
-  )
-    .bind(now, toEpoch, userId)
-    .run();
-
-  return { fromEpoch, toEpoch, wipeOperationId };
+  await pushToUser(env, userId, { type: "wipe.completed" });
+  return { toEpoch };
 }
