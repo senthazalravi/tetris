@@ -314,6 +314,7 @@ messageRoutes.get("/sync", requireUnlocked, async (c) => {
     `SELECT m.id, m.conversation_id, m.sender_user_id, m.sender_device_id, m.recipient_user_id,
             m.recipient_device_id, m.delivery_state, m.attachment_id,
             m.created_at, m.expires_at, m.updated_at, m.deleted_at,
+            m.delivered_at, m.read_at,
             CASE WHEN m.recipient_user_id = ?1 THEN m.ciphertext END AS ciphertext,
             CASE WHEN m.recipient_user_id = ?1 THEN m.crypto_header END AS crypto_header
      FROM messages m
@@ -343,6 +344,8 @@ messageRoutes.get("/sync", requireUnlocked, async (c) => {
       expires_at: number;
       updated_at: number;
       deleted_at: number | null;
+      delivered_at: number | null;
+      read_at: number | null;
       ciphertext: ArrayBuffer | null;
       crypto_header: ArrayBuffer | null;
     }>();
@@ -366,6 +369,9 @@ messageRoutes.get("/sync", requireUnlocked, async (c) => {
       createdAt: m.created_at,
       expiresAt: m.expires_at,
       updatedAt: m.updated_at,
+      // Only the sender learns when the recipient received / read a message.
+      deliveredAt: incoming ? null : m.delivered_at,
+      readAt: incoming ? null : m.read_at,
     };
   });
   return c.json({ serverTime: now, messages, hasMore });
@@ -389,7 +395,9 @@ messageRoutes.post("/messages/ack", requireUnlocked, async (c) => {
       ? `delivery_state IN ('accepted','delivered')`
       : `delivery_state = 'accepted'`;
   const res = await c.env.DB.prepare(
-    `UPDATE messages SET delivery_state = ?1, updated_at = ?2
+    `UPDATE messages SET delivery_state = ?1, updated_at = ?2,
+            delivered_at = COALESCE(delivered_at, ?2),
+            read_at = CASE WHEN ?1 = 'read' THEN COALESCE(read_at, ?2) ELSE read_at END
      WHERE recipient_user_id = ?3 AND deleted_at IS NULL AND expires_at > ?2
        AND ${allowed} AND id IN (${placeholders})
      RETURNING sender_user_id, conversation_id`,

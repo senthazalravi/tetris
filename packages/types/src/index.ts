@@ -58,6 +58,9 @@ export interface SyncMessage {
   createdAt: number;
   expiresAt: number;
   updatedAt: number;
+  /** Outgoing messages only: when the recipient's device received / read it. */
+  deliveredAt: number | null;
+  readAt: number | null;
 }
 
 export interface SyncResponse {
