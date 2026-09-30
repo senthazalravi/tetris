@@ -14,7 +14,7 @@ run_worker_first = ["/api/*"]
 binding = "DB"
 database_name = "lop-db"
 # Replace with the id printed by `wrangler d1 create lop-db` before deploying.
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "3a380fdd-45b3-405f-b857-4b79dd0e4668"
 migrations_dir = "../../db/migrations"
 
 [[r2_buckets]]
