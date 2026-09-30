@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type DragEvent } from "re
 import { ArrowDown, ArrowLeft, Info, ShieldCheck, Upload } from "lucide-react";
 import type { ConversationDto } from "@lop/types";
 import { formatDay } from "@/lib/format";
-import { selectConversation, useChat } from "@/state/chat";
+import { nameOf, selectConversation, useChat } from "@/state/chat";
 import { useSession } from "@/state/session";
 import { Avatar, IconButton } from "@/ui/kit";
 import { useNow } from "@/ui/hooks";
@@ -17,6 +17,8 @@ export function Thread({ conv }: { conv: ConversationDto }) {
   const myId = useSession((s) => s.user!.id);
   const messages = useChat((s) => s.messages[conv.id]) ?? EMPTY;
   const typing = useChat((s) => s.typing[conv.id]);
+  const nicknames = useChat((s) => s.nicknames);
+  const peerName = nameOf(nicknames, conv.peer);
   const now = useNow(30_000);
   const [info, setInfo] = useState(false);
   const [file, setFile] = useState<File | null>(null);
@@ -73,7 +75,7 @@ export function Thread({ conv }: { conv: ConversationDto }) {
     }
     const first = !prev || prev.direction !== m.direction || m.createdAt - prev.createdAt > 5 * 60_000;
     items.push(
-      <Bubble key={m.id} m={m} now={now} peerName={conv.peer.displayName} myId={myId} first={first} />,
+      <Bubble key={m.id} m={m} peerName={peerName} myId={myId} first={first} />,
     );
     prev = m;
   }
@@ -100,7 +102,7 @@ export function Thread({ conv }: { conv: ConversationDto }) {
           <Avatar name={conv.peer.displayName} seed={conv.peer.userId} url={conv.peer.avatarUrl} size={42} />
           <span className="min-w-0">
             <span className="block truncate font-display text-[17px] font-bold leading-tight">
-              {conv.peer.displayName}
+              {peerName}
             </span>
             <span className="block truncate text-xs text-muted">
               {isTyping ? (
@@ -167,3 +169,4 @@ export function Thread({ conv }: { conv: ConversationDto }) {
     </section>
   );
 }
+

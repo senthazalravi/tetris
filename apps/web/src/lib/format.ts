@@ -70,3 +70,15 @@ export function linkify(text: string): TextPart[] {
 export function newMessageId(): string {
   return `msg_${crypto.randomUUID().replace(/-/g, "")}`;
 }
+
+/** "Wed, 30 Sep, 3:05:12 PM" */
+export function formatFull(ts: number): string {
+  return new Date(ts).toLocaleString([], {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
