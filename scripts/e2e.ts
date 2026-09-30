@@ -1,6 +1,6 @@
-﻿/**
+/**
  * End-to-end acceptance test against a running `wrangler dev` (real Worker,
- * real D1, real R2, real Durable Object). Mirrors LLD Â§14.
+ * real D1, real R2, real Durable Object). Mirrors LLD §14.
  *
  *   npm run dev:api        # terminal 1
  *   npm run test:e2e       # terminal 2
@@ -170,10 +170,10 @@ class Client {
 }
 
 let step = 0;
-const ok = (label: string) => console.log(`  âœ“ ${String(++step).padStart(2, "0")} ${label}`);
+const ok = (label: string) => console.log(`  ✓ ${String(++step).padStart(2, "0")} ${label}`);
 
 async function main() {
-  console.log(`Lop e2e â†’ ${BASE}\n`);
+  console.log(`Lop e2e → ${BASE}\n`);
 
   const alice = new Client("alice");
   const bob = new Client("bob");
@@ -220,7 +220,7 @@ async function main() {
   const exact = await alice.req("GET", `/users/lookup?username=${bob.username.toUpperCase()}`);
   assert.equal(exact.status, 200);
   assert.equal((await alice.req("GET", "/users")).status, 404);
-  ok("exact (case-insensitive) lookup only: partial â†’ 404, no list endpoint");
+  ok("exact (case-insensitive) lookup only: partial → 404, no list endpoint");
 
   const conv = await alice.openChat(bob);
   const aliceContacts = await alice.req("GET", "/contacts");
@@ -255,6 +255,11 @@ async function main() {
   await bob.req("POST", "/messages/ack", { ids: [sent.id], state: "read" });
   const aSync = await alice.req("GET", "/sync?ts=0&id=");
   assert.equal(aSync.data.messages.find((m: any) => m.id === sent.id).state, "read");
+  const rcpt = aSync.data.messages.find((m: any) => m.id === sent.id);
+  assert.ok(rcpt.readAt > 0 && rcpt.deliveredAt > 0, "sender learns delivered/read times");
+  assert.ok(rcpt.deliveredAt <= rcpt.readAt);
+  const bSyncRcpt = (await bob.req("GET", "/sync?ts=0&id=")).data.messages.find((m: any) => m.id === sent.id);
+  assert.equal(bSyncRcpt.readAt, null, "recipient is not shown receipt times");
   const back = await bob.send(conv.id, alice, "got it");
   assert.equal(back.status, 201);
   const rxA = await alice.receive(bob);
@@ -275,9 +280,13 @@ async function main() {
   assert.equal((await carol.req("GET", `/attachments/${up.data.attachmentId}`)).status, 404);
   ok("attachments: ciphertext in R2, bob decrypts, carol is refused");
 
-  const big = await alice.req("PUT", `/conversations/${conv.id}/attachments`, undefined, new Uint8Array(26 * 1024 * 1024));
+  const big = await alice.req("PUT", `/conversations/${conv.id}/attachments`, undefined, new Uint8Array(91 * 1024 * 1024));
   assert.equal(big.status, 413);
-  ok("oversize attachment rejected (25 MB cap)");
+  ok("oversize attachment rejected (90 MB hard cap)");
+
+  const mid = await alice.req("PUT", `/conversations/${conv.id}/attachments`, undefined, new Uint8Array(30 * 1024 * 1024));
+  assert.equal(mid.status, 201, JSON.stringify(mid.data));
+  ok("a 30 MB document/photo is accepted (only videos are capped lower, client-side)");
 
   // --- delete for everyone ---------------------------------------------
   const del = await alice.req("DELETE", `/messages/${withFile.id}`);
@@ -339,7 +348,7 @@ async function main() {
   r = await b2.login();
   const early = await b2.req("POST", "/auth/unlock", { challengeId: r.data.challenge.id, verifier: null });
   assert.equal(early.status, 400);
-  console.log("    â€¦waiting 31s for the unlock window to close");
+  console.log("    …waiting 31s for the unlock window to close");
   await sleep(31_000);
   const to = await b2.req("POST", "/auth/unlock", { challengeId: r.data.challenge.id, verifier: null });
   assert.equal(to.data.reason, "TIMEOUT");
@@ -350,7 +359,7 @@ async function main() {
   const c2 = new Client("carol", carol.username, carol.email, carol.password, carol.passcode);
   r = await c2.login();
   assert.ok(r.data.challenge);
-  console.log("    â€¦abandoning the challenge for 31s (tab closed)");
+  console.log("    …abandoning the challenge for 31s (tab closed)");
   await sleep(31_000);
   const c3 = new Client("carol", carol.username, carol.email, carol.password, carol.passcode);
   const relogin = await c3.login();
@@ -361,7 +370,7 @@ async function main() {
   const d = new Client("dave");
   await d.register();
   r = await d.login();
-  console.log("    â€¦waiting 31s, then submitting the CORRECT passcode too late");
+  console.log("    …waiting 31s, then submitting the CORRECT passcode too late");
   await sleep(31_000);
   const late = await d.unlock(r.data.challenge);
   assert.equal(late.data.wiped, true);
@@ -419,7 +428,8 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error("\nâœ— e2e failed:", e);
+  console.error("\n✗ e2e failed:", e);
   process.exit(1);
 });
+
 
