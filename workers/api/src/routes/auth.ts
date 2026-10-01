@@ -446,6 +446,136 @@ authRoutes.post("/vault", requireSession, async (c) => {
   return c.json({ vaultToken, user: publicUser(fresh) }, 201);
 });
 
+/* ------------------- forgot account password (no email) ------------------- */
+
+/**
+ * Two recovery paths, both without sending mail:
+ *  1. Vault still active → email + @username + vault passcode
+ *  2. Vault wiped / never set → email + @username (chats already gone)
+ * Wrong vault here does NOT wipe. Unknown emails get a fake vault salt and
+ * `requiresVault: true` so we don't advertise which addresses exist.
+ */
+authRoutes.post("/password-reset/preflight", async (c) => {
+  const ip = clientIp(c.req);
+  if (!(await hit(c.env, `pwresetpre:${ip}`, 30, 60_000))) {
+    return c.json({ error: "Too many requests" }, 429);
+  }
+  const body = await c.req.json<{ email?: string }>().catch(() => ({}) as { email?: string });
+  const email = normalizeEmail(body.email ?? "");
+  if (!EMAIL_PATTERN.test(email) || email.length > 254) {
+    return c.json({ error: "Enter a valid email address" }, 400);
+  }
+  const user = await c.env.DB.prepare(`SELECT * FROM users WHERE email = ? LIMIT 1`)
+    .bind(email)
+    .first<DbUser>();
+  const secret = c.env.SESSION_SECRET ?? "lop-dev-secret";
+  if (!user) {
+    return c.json({
+      vaultSalt: await fakeSalt(secret, `vault:${email}`),
+      requiresVault: true,
+    });
+  }
+  if (user.vault_salt && user.vault_verifier_hash) {
+    return c.json({ vaultSalt: user.vault_salt, requiresVault: true });
+  }
+  return c.json({
+    vaultSalt: await fakeSalt(secret, `vault:${email}`),
+    requiresVault: false,
+  });
+});
+
+authRoutes.post("/password-reset", async (c) => {
+  const ip = clientIp(c.req);
+  if (!(await hit(c.env, `pwreset:${ip}`, 15, 60_000))) {
+    return c.json({ error: "Too many attempts. Wait a minute." }, 429);
+  }
+  const body = await c.req
+    .json<{
+      email?: string;
+      username?: string;
+      vaultVerifier?: string | null;
+      authSalt?: string;
+      authProof?: string;
+      turnstileToken?: string;
+    }>()
+    .catch(() => ({}) as Record<string, never>);
+  if (!(await verifyTurnstile(c.env, body.turnstileToken, ip))) {
+    return c.json({ error: "Verification failed. Please retry." }, 400);
+  }
+
+  const email = normalizeEmail(body.email ?? "");
+  const username = normalizeUsername(body.username ?? "");
+  if (!EMAIL_PATTERN.test(email) || email.length > 254) {
+    return c.json({ error: "Enter a valid email address" }, 400);
+  }
+  if (!USERNAME_PATTERN.test(username)) {
+    return c.json({ error: "Enter your @username exactly" }, 400);
+  }
+  if (!validB64(body.authSalt, 16) || !validB64(body.authProof, 32)) {
+    return c.json({ error: "Malformed credentials" }, 400);
+  }
+
+  const failKey = `pwresetfail:${email}`;
+  if (!(await peek(c.env, failKey, 8, 15 * 60_000))) {
+    return c.json({ error: "Too many failed attempts. Try again in 15 minutes." }, 429);
+  }
+
+  const user = await c.env.DB.prepare(`SELECT * FROM users WHERE email = ? LIMIT 1`)
+    .bind(email)
+    .first<DbUser>();
+
+  const deny = async () => {
+    await hit(c.env, failKey, 8, 15 * 60_000);
+    return c.json(
+      {
+        error:
+          "Could not verify that account. Check email, @username, and vault passcode (if your vault is still active).",
+      },
+      401,
+    );
+  };
+
+  if (!user || user.username !== username) return deny();
+
+  const vaultActive = Boolean(user.vault_salt && user.vault_verifier_hash);
+  if (vaultActive) {
+    if (!validB64(body.vaultVerifier, 32)) {
+      return c.json(
+        {
+          error:
+            "This account still has an active vault. Enter your vault passcode (not your account password) to continue.",
+        },
+        400,
+      );
+    }
+    const vaultOk = safeEqual(
+      await sha256Hex(body.vaultVerifier),
+      user.vault_verifier_hash!,
+    );
+    if (!vaultOk) return deny();
+  }
+
+  await clear(c.env, failKey);
+
+  const now = Date.now();
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      `UPDATE users SET auth_salt = ?, auth_hash = ?, updated_at = ? WHERE id = ?`,
+    ).bind(body.authSalt, await sha256Hex(body.authProof), now, user.id),
+    c.env.DB.prepare(
+      `UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL`,
+    ).bind(now, user.id),
+    c.env.DB.prepare(`DELETE FROM unlocks WHERE user_id = ?`).bind(user.id),
+  ]);
+
+  return c.json({
+    ok: true,
+    message: vaultActive
+      ? "Account password updated. Sign in with the new password. Your vault passcode is unchanged."
+      : "Account password updated. Sign in, then set up a new vault passcode.",
+  });
+});
+
 /* ------------------------------- logout -------------------------------- */
 
 authRoutes.post("/logout", async (c) => {

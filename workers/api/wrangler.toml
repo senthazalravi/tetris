@@ -32,6 +32,7 @@ new_sqlite_classes = ["UserGateway"]
 
 [vars]
 COOKIE_SECURE = "true"
+APP_ORIGIN = "https://lop.manasdutta512.workers.dev"
 
 [triggers]
 # Every minute: enforces the 30s unlock timeout for abandoned logins and the 24h TTL.

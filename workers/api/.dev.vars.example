@@ -1,3 +1,4 @@
 COOKIE_SECURE=false
 ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 SESSION_SECRET=dev-only-secret-change-in-production
+APP_ORIGIN=http://localhost:5173

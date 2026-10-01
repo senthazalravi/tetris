@@ -5,6 +5,8 @@ export interface Env {
   ASSETS: Fetcher;
   /** "true" in production (HTTPS). */
   COOKIE_SECURE: string;
+  /** Public site origin (optional). */
+  APP_ORIGIN?: string;
   /** Extra allowed Origin values (comma separated), e.g. the Vite dev server. */
   ALLOWED_ORIGINS?: string;
   /** Wrangler secret. Keys the fake-salt oracle defence in /auth/prelogin. */
