@@ -22,10 +22,12 @@ import {
   type MessageEnvelope,
   type ReplyRef,
 } from "@tetris/protocol";
-import { EDIT_WINDOW_MS, MESSAGE_TTL_MS } from "@tetris/config";
+import { EDIT_WINDOW_MS, GROUP_MESSAGE_TTL_MS, MESSAGE_TTL_MS } from "@tetris/config";
 import type {
   ContactDto,
   ConversationDto,
+  ConversationPeer,
+  GroupCopy,
   RealtimeEvent,
   SyncMessage,
 } from "@tetris/types";
@@ -139,6 +141,18 @@ function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
     }),
   );
   return next;
+}
+
+/** Group messages live a week, direct messages a day. */
+function ttlFor(conv: ConversationDto | undefined): number {
+  return conv?.group ? GROUP_MESSAGE_TTL_MS : MESSAGE_TTL_MS;
+}
+
+/** Take several locks in a fixed order, so two group sends can never deadlock. */
+function withLocks<T>(keys: string[], fn: () => Promise<T>): Promise<T> {
+  const [first, ...rest] = [...new Set(keys)].sort();
+  if (first === undefined) return fn();
+  return withLock(first, () => withLocks(rest, fn));
 }
 
 const RANK: Record<LocalState, number> = {
@@ -447,7 +461,11 @@ async function noteIdentity(
   const db = vault().db;
   const known = await db.getPeer<{ identityKey: string; signingKey: string }>(peerId);
   if (known && known.identityKey !== identityKey && convId) {
-    const name = convFor(convId)?.peer.displayName ?? "this contact";
+    const target = convFor(convId);
+    const name =
+      target?.group?.members.find((x) => x.userId === peerId)?.displayName ??
+      target?.peer.displayName ??
+      "this contact";
     await addSystem(
       convId,
       `${name}'s security code changed. This happens when they sign in on a new browser or clear their chats. Verify it if the conversation is sensitive.`,
@@ -548,7 +566,8 @@ async function syncPass() {
 }
 
 async function handleSyncMessage(m: SyncMessage): Promise<LocalMessage | null> {
-  const existing = localMessage(m.conversationId, m.id);
+  // Group messages arrive as one encrypted copy per member; they all share messageId.
+  const existing = localMessage(m.conversationId, m.messageId);
 
   if (m.direction === "out") {
     if (!existing || existing.deleted) return null;
@@ -583,8 +602,8 @@ async function handleSyncMessage(m: SyncMessage): Promise<LocalMessage | null> {
 
   return withLock(`peer:${m.senderUserId}`, async () => {
     // Re-check inside the lock: another pass may have handled it already.
-    if (localMessage(m.conversationId, m.id)) return null;
-    const stored = await vault().db.getMessage(m.id);
+    if (localMessage(m.conversationId, m.messageId)) return null;
+    const stored = await vault().db.getMessage(m.messageId);
     if (stored) return null;
 
     let content: MessageContent;
@@ -614,7 +633,8 @@ async function handleSyncMessage(m: SyncMessage): Promise<LocalMessage | null> {
       document.visibilityState === "visible" &&
       document.hasFocus();
     const msg: LocalMessage = {
-      id: m.id,
+      id: m.messageId,
+      rowId: m.id,
       convId: m.conversationId,
       senderId: m.senderUserId,
       direction: "in",
@@ -639,8 +659,8 @@ async function handleSyncMessage(m: SyncMessage): Promise<LocalMessage | null> {
 }
 
 async function acknowledge(msgs: LocalMessage[]) {
-  const visible = msgs.filter((m) => !m.unread).map((m) => m.id);
-  const rest = msgs.filter((m) => m.unread).map((m) => m.id);
+  const visible = msgs.filter((m) => !m.unread).map((m) => m.rowId ?? m.id);
+  const rest = msgs.filter((m) => m.unread).map((m) => m.rowId ?? m.id);
   try {
     if (visible.length) await api.post("/messages/ack", { ids: visible, state: "read" });
     if (rest.length) await api.post("/messages/ack", { ids: rest, state: "delivered" });
@@ -655,7 +675,7 @@ export async function markRead(convId: string) {
   if (!unread.length) return;
   for (const m of unread) await saveAndShow({ ...m, unread: false });
   try {
-    const ids = unread.filter((m) => !m.id.startsWith("sys_")).map((m) => m.id);
+    const ids = unread.filter((m) => !m.id.startsWith("sys_")).map((m) => m.rowId ?? m.id);
     for (let i = 0; i < ids.length; i += 100) {
       await api.post("/messages/ack", { ids: ids.slice(i, i + 100), state: "read" });
     }
@@ -740,7 +760,7 @@ export async function sendMessage(convId: string, input: SendInput): Promise<voi
     senderId: me(),
     direction: "out",
     createdAt: now,
-    expiresAt: now + MESSAGE_TTL_MS,
+    expiresAt: now + ttlFor(conv),
     state: "sending",
     content,
   };
@@ -760,6 +780,63 @@ export async function retryMessage(convId: string, id: string) {
   const next = { ...m, state: "sending" as const };
   await saveAndShow(next);
   await deliver(next);
+}
+
+/**
+ * Group fan-out: one pairwise Double Ratchet envelope per member device, all
+ * posted in a single request. Sessions only advance once the server accepts.
+ */
+async function sendToGroup(
+  conv: ConversationDto,
+  messageId: string,
+  content: MessageEnvelope,
+  attachmentId: string | undefined,
+): Promise<{ createdAt: number; expiresAt: number }> {
+  let forceUser: string | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const live = convFor(conv.id) ?? conv;
+    const others: ConversationPeer[] = (live.group?.members ?? []).filter(
+      (m) => m.userId !== me() && m.deviceId,
+    );
+    if (others.length === 0) {
+      throw new Error("Nobody else in this group has signed in yet.");
+    }
+    const result = await withLocks(others.map((m) => `peer:${m.userId}`), async () => {
+      const copies: GroupCopy[] = [];
+      const advanced: Array<[string, RatchetState]> = [];
+      for (const member of others) {
+        const state = await ensureOutboundSession(
+          { ...live, peer: member },
+          forceUser === member.userId,
+        );
+        const enc = await ratchetEncrypt(state, encodeEnvelope(content));
+        copies.push({
+          recipientUserId: member.userId,
+          recipientDeviceId: state.peerDeviceId,
+          cryptoHeader: enc.message.cryptoHeader,
+          ciphertext: enc.message.ciphertext,
+        });
+        advanced.push([member.userId, enc.state]);
+      }
+      try {
+        const res = await api.post<{ createdAt: number; expiresAt: number }>(
+          `/conversations/${conv.id}/group-messages`,
+          { messageId, senderDeviceId: vault().deviceId, copies, attachmentId },
+        );
+        for (const [userId, st] of advanced) await storeSession(userId, st);
+        return res;
+      } catch (e) {
+        if (e instanceof ApiError && (e.code === "DEVICE_CHANGED" || e.code === "PEER_NOT_READY")) {
+          forceUser = typeof e.data?.userId === "string" ? e.data.userId : null;
+          return null;
+        }
+        throw e;
+      }
+    });
+    if (result) return result;
+    await refreshConversations();
+  }
+  throw new Error("Could not establish secure sessions with the group.");
 }
 
 async function deliver(msg: LocalMessage) {
@@ -803,36 +880,38 @@ async function deliver(msg: LocalMessage) {
       attachmentId = content.attachment.id;
     }
 
-    // 2. Encrypt + post, one at a time per peer.
-    const result = await withLock(`peer:${conv.peer.userId}`, async () => {
-      for (let attempt = 0; attempt < 2; attempt++) {
-        const liveConv = convFor(msg.convId) ?? conv;
-        const state = await ensureOutboundSession(liveConv, attempt > 0);
-        const enc = await ratchetEncrypt(state, encodeEnvelope(content));
-        try {
-          const res = await api.post<{ createdAt: number; expiresAt: number }>(
-            `/conversations/${msg.convId}/messages`,
-            {
-              messageId: msg.id,
-              senderDeviceId: vault().deviceId,
-              recipientDeviceId: state.peerDeviceId,
-              cryptoHeader: enc.message.cryptoHeader,
-              ciphertext: enc.message.ciphertext,
-              attachmentId,
-            },
-          );
-          await storeSession(conv.peer.userId, enc.state);
-          return res;
-        } catch (e) {
-          if (e instanceof ApiError && e.code === "DEVICE_CHANGED" && attempt === 0) {
-            await refreshConversations();
-            continue;
+    // 2. Encrypt + post. A group message is sealed separately for every member.
+    const result = conv.group
+      ? await sendToGroup(conv, msg.id, content, attachmentId)
+      : await withLock(`peer:${conv.peer.userId}`, async () => {
+          for (let attempt = 0; attempt < 2; attempt++) {
+            const liveConv = convFor(msg.convId) ?? conv;
+            const state = await ensureOutboundSession(liveConv, attempt > 0);
+            const enc = await ratchetEncrypt(state, encodeEnvelope(content));
+            try {
+              const res = await api.post<{ createdAt: number; expiresAt: number }>(
+                `/conversations/${msg.convId}/messages`,
+                {
+                  messageId: msg.id,
+                  senderDeviceId: vault().deviceId,
+                  recipientDeviceId: state.peerDeviceId,
+                  cryptoHeader: enc.message.cryptoHeader,
+                  ciphertext: enc.message.ciphertext,
+                  attachmentId,
+                },
+              );
+              await storeSession(conv.peer.userId, enc.state);
+              return res;
+            } catch (e) {
+              if (e instanceof ApiError && e.code === "DEVICE_CHANGED" && attempt === 0) {
+                await refreshConversations();
+                continue;
+              }
+              throw e;
+            }
           }
-          throw e;
-        }
-      }
-      throw new Error("Could not establish a secure session.");
-    });
+          throw new Error("Could not establish a secure session.");
+        });
 
     const cur = localMessage(msg.convId, msg.id) ?? msg;
     await saveAndShow({
@@ -1049,7 +1128,7 @@ export async function sendPoll(convId: string, input: PollInput) {
     senderId: me(),
     direction: "out",
     createdAt: now,
-    expiresAt: now + MESSAGE_TTL_MS,
+    expiresAt: now + ttlFor(conv),
     state: "sending",
     content: {
       v: 1,
@@ -1222,6 +1301,7 @@ const typingTimers = new Map<string, number>();
 let typingChain: Promise<void> = Promise.resolve();
 
 export function typingPing(convId: string) {
+  if (convFor(convId)?.group) return; // no typing indicators in groups
   const now = Date.now();
   if (now - (typingSent.get(convId) ?? 0) > 3000) {
     typingSent.set(convId, now);
@@ -1237,6 +1317,7 @@ export function typingPing(convId: string) {
 }
 
 export function stopTyping(convId: string) {
+  if (convFor(convId)?.group) return;
   window.clearTimeout(typingTimers.get(convId));
   typingTimers.delete(convId);
   if (typingSent.has(convId)) {

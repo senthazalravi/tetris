@@ -16,6 +16,8 @@ export type LocalState = "sending" | "failed" | "accepted" | "delivered" | "read
 
 export interface LocalMessage {
   id: string;
+  /** Server row id of the encrypted copy we received (receipts are acked by row). */
+  rowId?: string;
   convId: string;
   senderId: string;
   direction: "in" | "out";
