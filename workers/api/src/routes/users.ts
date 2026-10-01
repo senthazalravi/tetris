@@ -106,17 +106,33 @@ userRoutes.get("/users/search", requireUnlocked, async (c) => {
   const q = normalizeUsername(c.req.query("q") ?? "")
     .replace(/[^a-z0-9_]/g, "")
     .slice(0, 32);
-  if (!q) return c.json({ users: [] });
+  // Group names may contain spaces, usernames never do.
+  const gq = (c.req.query("q") ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^@/, "")
+    .replace(/[^a-z0-9_ ]/g, "")
+    .slice(0, 40);
+  if (!q && !gq) return c.json({ users: [], groups: [] });
   const escaped = q.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+  const gEscaped = gq.replace(/[\\%_]/g, (ch) => `\\${ch}`);
   const rows = await c.env.DB.prepare(
     `SELECT id, username, display_name, avatar_version FROM users
      WHERE id != ?1 AND username LIKE ?2 ESCAPE '\\'
      ORDER BY (username LIKE ?3 ESCAPE '\\') DESC, username
      LIMIT 8`,
   )
-    .bind(me.id, `%${escaped}%`, `${escaped}%`)
+    .bind(me.id, `%${escaped || "~"}%`, `${escaped || "~"}%`)
     .all<{ id: string; username: string; display_name: string; avatar_version: number }>();
+  const groupRows = await c.env.DB.prepare(
+    `SELECT c.id, c.name FROM group_members gm JOIN conversations c ON c.id = gm.conversation_id
+     WHERE gm.user_id = ?1 AND c.kind = 'group' AND LOWER(c.name) LIKE ?2 ESCAPE '\\'
+     ORDER BY c.name LIMIT 5`,
+  )
+    .bind(me.id, `%${gEscaped}%`)
+    .all<{ id: string; name: string }>();
   return c.json({
+    groups: (groupRows.results ?? []).map((g) => ({ conversationId: g.id, name: g.name })),
     users: (rows.results ?? []).map((u) => ({
       userId: u.id,
       username: u.username,

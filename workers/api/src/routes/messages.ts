@@ -1,6 +1,11 @@
 import { Hono } from "hono";
-import { MAX_CIPHERTEXT_BYTES, MESSAGE_TTL_MS } from "@tetris/config";
-import type { ConversationDto, SyncMessage } from "@tetris/types";
+import { GROUP_MESSAGE_TTL_MS, MAX_CIPHERTEXT_BYTES, MESSAGE_TTL_MS } from "@tetris/config";
+import type {
+  ConversationDto,
+  ConversationPeer,
+  GroupCopy,
+  SyncMessage,
+} from "@tetris/types";
 import type { Env } from "../env";
 import { avatarUrl, requireUnlocked, type AppEnv } from "../lib/session";
 import { hit } from "../lib/ratelimit";
@@ -26,7 +31,7 @@ const CONVERSATION_SELECT = `
   JOIN users u ON u.id = CASE WHEN c.user_a = ?1 THEN c.user_b ELSE c.user_a END
   LEFT JOIN devices d ON d.user_id = u.id AND d.revoked_at IS NULL
   LEFT JOIN contacts ct ON ct.owner_user_id = ?1 AND ct.contact_user_id = u.id
-  WHERE cm.user_id = ?1 AND cm.communication_epoch = ?2`;
+  WHERE cm.user_id = ?1 AND cm.communication_epoch = ?2 AND c.kind = 'dm'`;
 
 type ConvRow = {
   id: string;
@@ -65,6 +70,93 @@ async function loadConversation(env: Env, meId: string, epoch: number, id: strin
   return row ? toDto(row) : null;
 }
 
+type GroupMemberRow = {
+  uid: string;
+  username: string;
+  display_name: string;
+  avatar_version: number;
+  device_id: string | null;
+  identity_key: string | null;
+  signing_key: string | null;
+};
+
+function memberToPeer(r: GroupMemberRow): ConversationPeer {
+  return {
+    userId: r.uid,
+    username: r.username,
+    displayName: r.display_name,
+    avatarUrl: avatarUrl(r.uid, r.avatar_version),
+    deviceId: r.device_id,
+    identityKey: r.identity_key,
+    signingKey: r.signing_key,
+  };
+}
+
+/** Members of one group with their current device keys. */
+async function loadGroupMembers(env: Env, convId: string): Promise<ConversationPeer[]> {
+  const rows = await env.DB.prepare(
+    `SELECT u.id AS uid, u.username, u.display_name, u.avatar_version,
+            d.id AS device_id, d.identity_key, d.signing_key
+     FROM group_members gm
+     JOIN users u ON u.id = gm.user_id
+     LEFT JOIN devices d ON d.user_id = u.id AND d.revoked_at IS NULL
+     WHERE gm.conversation_id = ?
+     ORDER BY u.username`,
+  )
+    .bind(convId)
+    .all<GroupMemberRow>();
+  return (rows.results ?? []).map(memberToPeer);
+}
+
+/**
+ * Group conversations the user belongs to. Membership is permanent, but sync
+ * and attachments key off conversation_members for the current epoch, so
+ * refresh that row here (a wipe clears it).
+ */
+async function loadGroups(env: Env, me: { id: string; communication_epoch: number }) {
+  const rows = await env.DB.prepare(
+    `SELECT c.id, c.name, c.last_message_at
+     FROM group_members gm JOIN conversations c ON c.id = gm.conversation_id
+     WHERE gm.user_id = ? AND c.kind = 'group'`,
+  )
+    .bind(me.id)
+    .all<{ id: string; name: string | null; last_message_at: number }>();
+  const groups = rows.results ?? [];
+  if (groups.length) {
+    const now = Date.now();
+    await env.DB.batch(
+      groups.map((g) =>
+        env.DB.prepare(
+          `INSERT INTO conversation_members (conversation_id, user_id, joined_at, communication_epoch)
+           VALUES (?1, ?2, ?3, ?4)
+           ON CONFLICT(conversation_id, user_id) DO UPDATE SET communication_epoch = ?4`,
+        ).bind(g.id, me.id, now, me.communication_epoch),
+      ),
+    );
+  }
+  const out: ConversationDto[] = [];
+  for (const g of groups) {
+    const members = await loadGroupMembers(env, g.id);
+    const name = g.name ?? "Group";
+    out.push({
+      id: g.id,
+      lastMessageAt: g.last_message_at,
+      blocked: false,
+      peer: {
+        userId: g.id,
+        username: name,
+        displayName: name,
+        avatarUrl: null,
+        deviceId: null,
+        identityKey: null,
+        signingKey: null,
+      },
+      group: { name, members },
+    });
+  }
+  return out;
+}
+
 messageRoutes.get("/conversations", requireUnlocked, async (c) => {
   const me = c.get("user");
   const rows = await c.env.DB.prepare(
@@ -72,7 +164,11 @@ messageRoutes.get("/conversations", requireUnlocked, async (c) => {
   )
     .bind(me.id, me.communication_epoch)
     .all<ConvRow>();
-  return c.json({ conversations: (rows.results ?? []).map(toDto) });
+  const groups = await loadGroups(c.env, me);
+  const all = [...(rows.results ?? []).map(toDto), ...groups].sort(
+    (a, b) => b.lastMessageAt - a.lastMessageAt,
+  );
+  return c.json({ conversations: all });
 });
 
 /** Open (or create) the 1:1 conversation with someone found by exact username. */
@@ -135,7 +231,7 @@ async function memberOf(env: Env, convId: string, userId: string, epoch: number)
     `SELECT c.user_a, c.user_b, cm.communication_epoch
      FROM conversations c
      JOIN conversation_members cm ON cm.conversation_id = c.id AND cm.user_id = ?2
-     WHERE c.id = ?1`,
+     WHERE c.id = ?1 AND c.kind = 'dm'`,
   )
     .bind(convId, userId)
     .first<{ user_a: string; user_b: string; communication_epoch: number }>();
@@ -295,6 +391,202 @@ messageRoutes.post("/conversations/:id/messages", requireUnlocked, async (c) => 
   return c.json({ messageId: body.messageId, createdAt: now, expiresAt }, 201);
 });
 
+/* --------------------------- group send ------------------------------- */
+
+interface GroupSendBody {
+  messageId?: string;
+  senderDeviceId?: string;
+  copies?: GroupCopy[];
+  attachmentId?: string | null;
+}
+
+messageRoutes.post("/conversations/:id/group-messages", requireUnlocked, async (c) => {
+  const me = c.get("user");
+  if (!(await hit(c.env, `send:${me.id}`, 120, 60_000))) {
+    return c.json({ error: "You're sending too fast" }, 429);
+  }
+  const convId = c.req.param("id");
+  const isMember = await c.env.DB.prepare(
+    `SELECT 1 AS x FROM group_members gm JOIN conversations c ON c.id = gm.conversation_id
+     WHERE gm.conversation_id = ? AND gm.user_id = ? AND c.kind = 'group'`,
+  )
+    .bind(convId, me.id)
+    .first();
+  if (!isMember) return c.json({ error: "Not a member of this group" }, 403);
+
+  const body = await c.req.json<GroupSendBody>().catch(() => ({}) as GroupSendBody);
+  const copies = body.copies ?? [];
+  if (
+    !body.messageId ||
+    !MESSAGE_ID_PATTERN.test(body.messageId) ||
+    !body.senderDeviceId ||
+    copies.length === 0 ||
+    copies.length > 100
+  ) {
+    return c.json({ error: "Invalid message payload" }, 400);
+  }
+  const seen = new Set<string>();
+  for (const cp of copies) {
+    if (
+      !cp ||
+      typeof cp.recipientUserId !== "string" ||
+      typeof cp.recipientDeviceId !== "string" ||
+      cp.recipientUserId === me.id ||
+      seen.has(cp.recipientUserId) ||
+      !isBase64(cp.cryptoHeader, 4096) ||
+      !isBase64(cp.ciphertext, MAX_CIPHERTEXT_BYTES)
+    ) {
+      return c.json({ error: "Invalid message payload" }, 400);
+    }
+    seen.add(cp.recipientUserId);
+  }
+
+  const myDevice = await c.env.DB.prepare(
+    `SELECT id FROM devices WHERE user_id = ? AND revoked_at IS NULL`,
+  )
+    .bind(me.id)
+    .first<{ id: string }>();
+  if (!myDevice || myDevice.id !== body.senderDeviceId) {
+    return c.json({ error: "This device is no longer active", code: "DEVICE_INVALID" }, 409);
+  }
+
+  // Every copy must go to a current member's current device.
+  const ids = [...seen];
+  const marks = ids.map((_, i) => `?${i + 2}`).join(",");
+  const targets = await c.env.DB.prepare(
+    `SELECT u.id AS uid, u.communication_epoch AS epoch, d.id AS device_id,
+            (SELECT 1 FROM group_members gm WHERE gm.conversation_id = ?1 AND gm.user_id = u.id) AS member
+     FROM users u LEFT JOIN devices d ON d.user_id = u.id AND d.revoked_at IS NULL
+     WHERE u.id IN (${marks})`,
+  )
+    .bind(convId, ...ids)
+    .all<{ uid: string; epoch: number; device_id: string | null; member: number | null }>();
+  const byUser = new Map((targets.results ?? []).map((t) => [t.uid, t]));
+  for (const cp of copies) {
+    const t = byUser.get(cp.recipientUserId);
+    if (!t || !t.member) return c.json({ error: "Recipient is not in this group" }, 400);
+    if (!t.device_id) {
+      return c.json(
+        { error: "A member has not finished setting up", code: "PEER_NOT_READY", userId: t.uid },
+        409,
+      );
+    }
+    if (t.device_id !== cp.recipientDeviceId) {
+      return c.json(
+        {
+          error: "Recipient keys changed",
+          code: "DEVICE_CHANGED",
+          userId: t.uid,
+          currentDeviceId: t.device_id,
+        },
+        409,
+      );
+    }
+  }
+
+  let attachmentId: string | null = null;
+  if (body.attachmentId) {
+    const att = await c.env.DB.prepare(
+      `SELECT id FROM attachments
+       WHERE id = ? AND owner_user_id = ? AND conversation_id = ? AND message_id IS NULL`,
+    )
+      .bind(body.attachmentId, me.id, convId)
+      .first();
+    if (!att) return c.json({ error: "Attachment not found" }, 400);
+    attachmentId = body.attachmentId;
+  }
+
+  // Idempotent retries.
+  const dup = await c.env.DB.prepare(
+    `SELECT sender_user_id, created_at, expires_at FROM messages WHERE id = ?`,
+  )
+    .bind(body.messageId)
+    .first<{ sender_user_id: string; created_at: number; expires_at: number }>();
+  if (dup) {
+    if (dup.sender_user_id !== me.id) return c.json({ error: "Duplicate id" }, 409);
+    return c.json({ messageId: body.messageId, createdAt: dup.created_at, expiresAt: dup.expires_at });
+  }
+
+  const now = Date.now();
+  const expiresAt = now + GROUP_MESSAGE_TTL_MS;
+  const insert = `INSERT INTO messages (id, conversation_id, sender_user_id, sender_device_id,
+      recipient_user_id, recipient_device_id, ciphertext, crypto_header, attachment_id,
+      delivery_state, created_at, expires_at, updated_at, deleted_at, group_msg_id, canonical)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'accepted', ?, ?, ?, NULL, ?, ?)`;
+  const stmts = [
+    // The sender's own row: no recipient, no ciphertext. It carries the aggregate receipt.
+    c.env.DB.prepare(insert).bind(
+      body.messageId,
+      convId,
+      me.id,
+      myDevice.id,
+      "",
+      "",
+      new Uint8Array(0),
+      new Uint8Array(0),
+      attachmentId,
+      now,
+      expiresAt,
+      now,
+      body.messageId,
+      1,
+    ),
+    ...copies.map((cp) =>
+      c.env.DB.prepare(insert).bind(
+        randomId("msg"),
+        convId,
+        me.id,
+        myDevice.id,
+        cp.recipientUserId,
+        cp.recipientDeviceId,
+        b64Decode(cp.ciphertext),
+        b64Decode(cp.cryptoHeader),
+        null,
+        now,
+        expiresAt,
+        now,
+        body.messageId,
+        0,
+      ),
+    ),
+    c.env.DB.prepare(`UPDATE conversations SET last_message_at = ? WHERE id = ?`).bind(now, convId),
+    ...copies.map((cp) =>
+      c.env.DB.prepare(
+        `INSERT INTO conversation_members (conversation_id, user_id, joined_at, communication_epoch)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(conversation_id, user_id) DO UPDATE SET communication_epoch = ?4`,
+      ).bind(convId, cp.recipientUserId, now, byUser.get(cp.recipientUserId)?.epoch ?? 1),
+    ),
+  ];
+  if (attachmentId) {
+    stmts.push(
+      c.env.DB.prepare(`UPDATE attachments SET message_id = ?, expires_at = ? WHERE id = ?`).bind(
+        body.messageId,
+        expiresAt,
+        attachmentId,
+      ),
+    );
+  }
+  try {
+    await c.env.DB.batch(stmts);
+  } catch {
+    return c.json({ error: "Could not store message" }, 409);
+  }
+  // The recipients' rows carry the attachment id too (sync reads it per row).
+  if (attachmentId) {
+    await c.env.DB.prepare(
+      `UPDATE messages SET attachment_id = ? WHERE group_msg_id = ? AND canonical = 0`,
+    )
+      .bind(attachmentId, body.messageId)
+      .run();
+  }
+
+  for (const cp of copies) {
+    await pushToUser(c.env, cp.recipientUserId, { type: "message.new", conversationId: convId });
+  }
+  return c.json({ messageId: body.messageId, createdAt: now, expiresAt }, 201);
+});
+
 /* ------------------------------ sync ---------------------------------- */
 
 messageRoutes.get("/sync", requireUnlocked, async (c) => {
@@ -312,7 +604,7 @@ messageRoutes.get("/sync", requireUnlocked, async (c) => {
 
   const rows = await c.env.DB.prepare(
     `SELECT m.id, m.conversation_id, m.sender_user_id, m.sender_device_id, m.recipient_user_id,
-            m.recipient_device_id, m.delivery_state, m.attachment_id,
+            m.recipient_device_id, m.delivery_state, m.attachment_id, m.group_msg_id,
             m.created_at, m.expires_at, m.updated_at, m.deleted_at,
             m.delivered_at, m.read_at,
             CASE WHEN m.recipient_user_id = ?1 THEN m.ciphertext END AS ciphertext,
@@ -321,6 +613,7 @@ messageRoutes.get("/sync", requireUnlocked, async (c) => {
      JOIN conversation_members cm
        ON cm.conversation_id = m.conversation_id AND cm.user_id = ?1 AND cm.communication_epoch = ?2
      WHERE (m.sender_user_id = ?1 OR (m.recipient_user_id = ?3 AND m.recipient_device_id = ?4))
+       AND NOT (m.sender_user_id = ?1 AND m.canonical = 0)
        AND m.expires_at > ?5
        AND (m.updated_at > ?6 OR (m.updated_at = ?6 AND m.id > ?7))
        AND NOT (
@@ -340,6 +633,7 @@ messageRoutes.get("/sync", requireUnlocked, async (c) => {
       recipient_user_id: string;
       delivery_state: "accepted" | "delivered" | "read";
       attachment_id: string | null;
+      group_msg_id: string | null;
       created_at: number;
       expires_at: number;
       updated_at: number;
@@ -357,6 +651,7 @@ messageRoutes.get("/sync", requireUnlocked, async (c) => {
     const deleted = m.deleted_at !== null;
     return {
       id: m.id,
+      messageId: m.group_msg_id ?? m.id,
       conversationId: m.conversation_id,
       senderUserId: m.sender_user_id,
       senderDeviceId: m.sender_device_id,
@@ -400,10 +695,31 @@ messageRoutes.post("/messages/ack", requireUnlocked, async (c) => {
             read_at = CASE WHEN ?1 = 'read' THEN COALESCE(read_at, ?2) ELSE read_at END
      WHERE recipient_user_id = ?3 AND deleted_at IS NULL AND expires_at > ?2
        AND ${allowed} AND id IN (${placeholders})
-     RETURNING sender_user_id, conversation_id`,
+     RETURNING sender_user_id, conversation_id, group_msg_id`,
   )
     .bind(body.state, now, me.id, ...ids)
-    .all<{ sender_user_id: string; conversation_id: string }>();
+    .all<{ sender_user_id: string; conversation_id: string; group_msg_id: string | null }>();
+
+  // Group messages: the sender's own row shows the lowest state across all copies.
+  const groupIds = [...new Set((res.results ?? []).map((r) => r.group_msg_id).filter(Boolean))];
+  for (const gid of groupIds as string[]) {
+    await c.env.DB.prepare(
+      `UPDATE messages SET
+         delivery_state = (
+           SELECT CASE
+             WHEN SUM(delivery_state = 'accepted') > 0 THEN 'accepted'
+             WHEN SUM(delivery_state = 'delivered') > 0 THEN 'delivered'
+             ELSE 'read' END
+           FROM messages WHERE group_msg_id = ?1 AND canonical = 0),
+         delivered_at = (SELECT MAX(delivered_at) FROM messages WHERE group_msg_id = ?1 AND canonical = 0),
+         read_at = (SELECT CASE WHEN COUNT(read_at) = COUNT(*) THEN MAX(read_at) END
+                    FROM messages WHERE group_msg_id = ?1 AND canonical = 0),
+         updated_at = ?2
+       WHERE id = ?1 AND canonical = 1`,
+    )
+      .bind(gid, now)
+      .run();
+  }
 
   const seen = new Set<string>();
   for (const row of res.results ?? []) {
@@ -424,11 +740,16 @@ messageRoutes.delete("/messages/:id", requireUnlocked, async (c) => {
   const me = c.get("user");
   const id = c.req.param("id");
   const msg = await c.env.DB.prepare(
-    `SELECT conversation_id, recipient_user_id, attachment_id
+    `SELECT conversation_id, recipient_user_id, attachment_id, group_msg_id
      FROM messages WHERE id = ? AND sender_user_id = ? AND deleted_at IS NULL`,
   )
     .bind(id, me.id)
-    .first<{ conversation_id: string; recipient_user_id: string; attachment_id: string | null }>();
+    .first<{
+      conversation_id: string;
+      recipient_user_id: string;
+      attachment_id: string | null;
+      group_msg_id: string | null;
+    }>();
   if (!msg) return c.json({ error: "Message not found" }, 404);
 
   const now = Date.now();
@@ -444,6 +765,32 @@ messageRoutes.delete("/messages/:id", requireUnlocked, async (c) => {
       }
     }
   }
+
+  if (msg.group_msg_id) {
+    const copies = await c.env.DB.prepare(
+      `SELECT DISTINCT recipient_user_id FROM messages
+       WHERE group_msg_id = ? AND canonical = 0`,
+    )
+      .bind(msg.group_msg_id)
+      .all<{ recipient_user_id: string }>();
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `UPDATE messages
+           SET deleted_at = ?1, updated_at = ?1, ciphertext = zeroblob(0), crypto_header = zeroblob(0), attachment_id = NULL
+         WHERE group_msg_id = ?2`,
+      ).bind(now, msg.group_msg_id),
+      c.env.DB.prepare(`DELETE FROM attachments WHERE id = ?`).bind(msg.attachment_id ?? ""),
+    ]);
+    for (const r of copies.results ?? []) {
+      await pushToUser(c.env, r.recipient_user_id, {
+        type: "message.deleted",
+        conversationId: msg.conversation_id,
+        messageId: msg.group_msg_id,
+      });
+    }
+    return c.json({ ok: true });
+  }
+
   await c.env.DB.batch([
     c.env.DB.prepare(
       `UPDATE messages
