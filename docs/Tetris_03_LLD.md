@@ -1,11 +1,13 @@
-# Lop — Low-Level Design (LLD)
+# Tetris — Low-Level Design (LLD)
+
+> **Revision note (Tetris revamp).** Auth sections below describe the original email + password design. The current product has no landing page, no email and no account password: users sign in with a username and a fixed 8-digit passcode (one attempt, 30 s, wipe on failure from the account's own browser), then play a round of Tetris before the chats open. See `.agents/AUTH.md`, `SECURITY.md` and `db/migrations/0004_passcode_only.sql`.
 
 | | |
 |---|---|
-| **Product** | Lop |
+| **Product** | Tetris |
 | **Version** | 1.0 · 30 Sep 2026 |
 | **Status** | Engineering handoff |
-| **Companion** | `docs/Lop_02_HLD.md`, `.agents/*` |
+| **Companion** | `docs/Tetris_02_HLD.md`, `.agents/*` |
 
 ---
 

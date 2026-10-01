@@ -11,7 +11,7 @@
 
 ## Survives
 
-Account id, email, password hash, username, display name, avatar, auth session (as designed).
+Account id, username, display name, avatar, auth session (as designed).
 
 ## Destroyed
 

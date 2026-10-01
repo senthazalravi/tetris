@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-If you believe you have found a security issue in Lop, please report it privately.
+If you believe you have found a security issue in Tetris, please report it privately.
 
 - Prefer email or a private channel via [manasdutta.com](https://www.manasdutta.com/)
 - Or open a **private** security advisory on the GitHub repository if available
@@ -17,9 +17,9 @@ Please **do not** post exploit details in public issues, discussions, or pull re
 
 We will acknowledge valid reports and aim to respond as soon as practical.
 
-## What Lop is designed to protect
+## What Tetris is designed to protect
 
-Lop is built so that **message and file content** is end-to-end encrypted:
+Tetris is built so that **message and file content** is end-to-end encrypted:
 
 - Plaintext is encrypted in the sender’s browser before upload or realtime send
 - Recipients decrypt only in their browser
@@ -31,22 +31,24 @@ Crypto is centered on:
 - **Double Ratchet** with **AES-256-GCM** for ongoing messages
 - **Per-file content keys** for attachments (key travels inside the E2EE envelope)
 
-Account password and vault passcode are **separate**:
+The 8-digit passcode is the only user secret (there is no account password; the email collected at sign-up is only for notifications):
 
 | Secret | Role |
 | --- | --- |
-| Account password | Authentication only (client-stretched proof; server stores a hash) |
-| Vault passcode | Never uploaded; unlocks sealed local data and device keys |
-| Message / attachment keys | Derived or wrapped for E2EE; not recoverable from the account password |
+| Passcode | Never uploaded; the server stores a hash of a derived verifier. Unlocks sealed local data and device keys |
+| Message / attachment keys | Derived or wrapped for E2EE; not recoverable from the server |
 
 The unlock gate (30 seconds, one attempt) and wipe-on-failure are intentional product security controls, not bugs.
 
-## What Lop does not claim
+## What Tetris does not claim
 
 - **Not metadata-private.** A relay can still see routing metadata (for example who messaged whom, when, and approximate sizes).
 - **Not immune to a compromised browser.** Malicious extensions, XSS in the delivered app, or a malicious device can undermine any web E2EE client.
 - **Not a guarantee against peer retention.** Recipients may keep decrypted copies until expiry or local cleanup.
-- **Vault passcode is not recoverable.** Forgot-password recovers the *account password* only, and only after proving ownership (vault passcode when active, or email + username after a wipe).
+- **The passcode is not recoverable.** After a wrong or late unlock the passcode expires; resetting it requires the username plus the email on file, so anyone who knows both can claim an expired account. Chats are already wiped by then, the reset is rate-limited, and contacts see a changed safety number.
+- **Small passcode space.** 8 digits is 10^8 possibilities. Protection comes from Argon2id stretching, the one-attempt rule, and rate limits, not from entropy.
+- **Wipes are tied to the account's own browser.** Failing or abandoning an unlock only wipes when the request carries the trusted-device cookie set at the last successful unlock; other browsers get a rate-limited failure so a stranger who knows a username cannot destroy chats.
+- **The Tetris screen is not a security control.** The vault is already unlocked in memory while the game runs.
 
 ## Secrets and deployment hygiene
 

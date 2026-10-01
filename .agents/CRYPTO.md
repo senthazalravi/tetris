@@ -14,13 +14,12 @@ Message and file plaintext is encrypted in the sender’s browser before upload 
 
 | Secret | Role |
 |---|---|
-| Account password | Server authentication only (hashed at rest) |
-| Vault passcode | Local KDF → vault key → unwrap device private keys / IndexedDB |
+| Passcode (8 digits) | Local KDF → vault key → unwrap device private keys / IndexedDB |
 | Identity/prekeys | E2EE session establishment |
 | Message keys | Ratchet-derived per message |
 | Attachment content key | Random per file; wrapped inside E2EE envelope |
 
-Account password is not used as the message encryption key.
+The passcode only derives the local vault key and the verifier; it is never used directly as a message key.
 
 ## Media
 

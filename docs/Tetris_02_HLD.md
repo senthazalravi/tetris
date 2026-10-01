@@ -1,18 +1,20 @@
-# Lop — High-Level Design (HLD)
+# Tetris — High-Level Design (HLD)
+
+> **Revision note (Tetris revamp).** Auth sections below describe the original email + password design. The current product has no landing page, no email and no account password: users sign in with a username and a fixed 8-digit passcode (one attempt, 30 s, wipe on failure from the account's own browser), then play a round of Tetris before the chats open. See `.agents/AUTH.md`, `SECURITY.md` and `db/migrations/0004_passcode_only.sql`.
 
 | | |
 |---|---|
-| **Product** | Lop — web-only E2EE messenger |
+| **Product** | Tetris — web-only E2EE messenger |
 | **Version** | 1.0 · 30 Sep 2026 |
 | **Status** | Implementation baseline |
 | **Supersedes (auth)** | Google OAuth and phone OTP from earlier drafts |
-| **Companion** | `docs/Lop_03_LLD.md`, `.agents/*`, `Lop_01_BRD.md` |
+| **Companion** | `docs/Tetris_03_LLD.md`, `.agents/*`, `Tetris_01_BRD.md` |
 
 ---
 
 ## 1. Purpose
 
-This HLD defines the system shape for Lop after the product lock:
+This HLD defines the system shape for Tetris after the product lock:
 
 - **Email + password** account creation and login (no Google, no phone).
 - **Username / user ID** discovery by **exact match only**.
@@ -33,7 +35,7 @@ This HLD defines the system shape for Lop after the product lock:
 | Google / phone login | Out of MVP |
 | Contact discovery | Exact `@username` lookup; no fuzzy global search |
 | Contact list | Only saved contacts + people with conversations |
-| Directory | Not public; no “everyone on Lop” list |
+| Directory | Not public; no “everyone on Tetris” list |
 | E2EE | Signal-style 1:1 (X3DH + Double Ratchet family) via vetted libs |
 | Message TTL | Fixed 24h from server `created_at` |
 | Wipe on correct passcode | **No** — keep chats/contacts |
@@ -129,7 +131,7 @@ Login (email or username + password)
 ### 5.3 Find someone and message (WhatsApp analogue)
 
 WhatsApp: save phone → contact appears → open chat.  
-Lop: know `@userid` → exact lookup → save/message → appears in *your* list only.
+Tetris: know `@userid` → exact lookup → save/message → appears in *your* list only.
 
 ```text
 New chat → enter exact @username
@@ -153,7 +155,7 @@ Send → encrypt in browser → server stores ciphertext + expires_at = now+24h
 
 ## 6. Contact model (WhatsApp-like)
 
-| Behavior | Lop rule |
+| Behavior | Tetris rule |
 |---|---|
 | Global member directory | **Forbidden** |
 | Search | Exact `@username` only |

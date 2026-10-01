@@ -1,4 +1,4 @@
-# Lop agent workspace
+# Tetris agent workspace
 
 These files are instructions for coding agents working in this repository.
 
@@ -14,10 +14,10 @@ These files are instructions for coding agents working in this repository.
 
 | Doc | Path |
 |---|---|
-| BRD | `Lop_01_BRD.md` |
-| HLD | `docs/Lop_02_HLD.md` |
-| LLD | `docs/Lop_03_LLD.md` |
-| Older combined PRD (historical) | `Lop_PRD_HLD_LLD.md` |
+| BRD | `Tetris_01_BRD.md` |
+| HLD | `docs/Tetris_02_HLD.md` |
+| LLD | `docs/Tetris_03_LLD.md` |
+| Older combined PRD (historical) | `Tetris_PRD_HLD_LLD.md` |
 
 If historical PRD conflicts with HLD/LLD 1.0 or these agent files, prefer **HLD/LLD 1.0 + `.agents/PRODUCT.md`**.
 

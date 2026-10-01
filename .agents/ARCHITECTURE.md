@@ -1,6 +1,6 @@
 # Architecture (agent summary)
 
-Full detail: `docs/Lop_02_HLD.md`, `docs/Lop_03_LLD.md`.
+Full detail: `docs/Tetris_02_HLD.md`, `docs/Tetris_03_LLD.md`.
 
 ## Shape
 
@@ -14,7 +14,7 @@ React+TS client  --HTTPS/WSS-->  Cloudflare Worker API
 ## Packages (target monorepo)
 
 ```text
-lop/
+tetris/
   apps/web/
   packages/crypto/     # only place protocol details live
   packages/protocol/
@@ -37,9 +37,9 @@ lop/
 
 | Service | Owns |
 |---|---|
-| Auth | register/login/session/password hash |
+| Auth | register/start/session (username + passcode verifier) |
 | Unlock | 30s challenge, one attempt |
-| Contacts | exact lookup, private lists, block |
+| Contacts | exact lookup, private lists |
 | Identity | devices, prekey bundles |
 | Messaging | ciphertext relay, TTL |
 | Attachments | R2 ciphertext I/O |

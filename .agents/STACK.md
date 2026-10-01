@@ -16,6 +16,6 @@ Real product infrastructure on free tiers — not a mocked demo backend.
 
 ## MVP constraints
 
-- Email/password auth only (no Google, no paid SMS).
+- Username + 8-digit passcode only (no email, no Google, no paid SMS).
 - Stay within Cloudflare free quotas: attachment size caps, rate limits, 24h expiry that keeps storage small.
 - Local/dev uses Wrangler against real Workers/D1/R2 emulation — same code paths as production.

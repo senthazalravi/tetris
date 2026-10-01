@@ -4,22 +4,22 @@ Agents treat these as fixed unless the human explicitly changes them.
 
 ## Nature of the build
 
-- Lop is a **real product** with real accounts, real messages, and real encrypted storage.
+- Tetris is a **real product** with real accounts, real messages, and real encrypted storage.
 - Do **not** build demo mode, fake users, mock chat data for sales, or “try the product without an account” paths.
 - Free hosting/tiers are fine; the app itself must be production-grade behavior, not a throwaway prototype.
 
 ## Identity and auth
 
 - Web only.
-- **Create account:** email + password + unique `@username` + display name + vault passcode.
-- **Login:** email **or** username + password, then vault passcode gate.
+- **Create account:** unique `@username` + email (notifications only) + 8-digit passcode.
+- **Login:** username + passcode (one attempt, 30s), then the Tetris home screen; search (unlocked after a round) opens chats.
 - No Google sign-in.
 - No phone number / SMS OTP in MVP.
 
 ## Contacts
 
 - Find people by **exact user ID / username** (`@alice`).
-- No match → not found. No fuzzy search, no “everyone on Lop” list.
+- No match → not found. No fuzzy search, no “everyone on Tetris” list.
 - **Contact list shows only people this user saved or chats with.**
 - Flow: New chat → enter `@userid` → match → Add contact / Message.
 
@@ -36,7 +36,7 @@ Agents treat these as fixed unless the human explicitly changes them.
 - After login: **30 seconds**, **one** vault passcode attempt.
   - **Correct in time:** unlock; keep contacts and messages.
   - **Wrong or timeout:** wipe communication state; account remains; empty UI.
-- Vault passcode ≠ account password.
+- There is no account password; the passcode is the only secret.
 
 ## Cost
 

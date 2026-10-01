@@ -2,7 +2,7 @@
 
 ## WhatsApp mapping
 
-| WhatsApp | Lop |
+| WhatsApp | Tetris |
 |---|---|
 | Save phone number | Save exact `@username` / user id |
 | Address book sync | Manual add + chat list only |
