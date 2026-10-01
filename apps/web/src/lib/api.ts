@@ -37,7 +37,7 @@ async function request<T>(
     headers["Content-Type"] = "application/json";
     body = JSON.stringify(init.body);
   }
-  if (vaultToken) headers["X-Lop-Vault"] = vaultToken;
+  if (vaultToken) headers["X-Tetris-Vault"] = vaultToken;
 
   let res: Response;
   try {

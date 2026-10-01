@@ -1,4 +1,4 @@
-name = "lop"
+name = "tetris"
 main = "src/index.ts"
 compatibility_date = "2025-09-01"
 compatibility_flags = ["nodejs_compat"]
@@ -12,14 +12,14 @@ run_worker_first = ["/api/*"]
 
 [[d1_databases]]
 binding = "DB"
-database_name = "lop-db"
-# Replace with the id printed by `wrangler d1 create lop-db` before deploying.
+database_name = "tetris-db"
+# Replace with the id printed by `wrangler d1 create tetris-db` before deploying.
 database_id = "3a380fdd-45b3-405f-b857-4b79dd0e4668"
 migrations_dir = "../../db/migrations"
 
 [[r2_buckets]]
 binding = "ATTACHMENTS"
-bucket_name = "lop-attachments"
+bucket_name = "tetris-attachments"
 
 # The free plan only supports SQLite-backed Durable Objects.
 [[durable_objects.bindings]]
@@ -32,7 +32,7 @@ new_sqlite_classes = ["UserGateway"]
 
 [vars]
 COOKIE_SECURE = "true"
-APP_ORIGIN = "https://lop.manasdutta512.workers.dev"
+APP_ORIGIN = "https://tetris.manasdutta512.workers.dev"
 
 [triggers]
 # Every minute: enforces the 30s unlock timeout for abandoned logins and the 24h TTL.

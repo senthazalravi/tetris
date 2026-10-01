@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MAX_VOICE_MS } from "@lop/config";
+import { MAX_VOICE_MS } from "@tetris/config";
 import { toast } from "@/state/chat";
 
 const CANDIDATES: Array<[mime: string, ext: string]> = [

@@ -1,5 +1,5 @@
 import { BarChart3, Check } from "lucide-react";
-import type { PollRef } from "@lop/protocol";
+import type { PollRef } from "@tetris/protocol";
 import type { LocalMessage } from "@/state/localdb";
 import { sendVote } from "@/state/chat";
 

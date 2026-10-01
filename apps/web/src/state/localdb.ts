@@ -1,5 +1,5 @@
-import { aeadOpen, aeadSeal, openJson, sealJson } from "@lop/crypto";
-import type { MessageEnvelope } from "@lop/protocol";
+import { aeadOpen, aeadSeal, openJson, sealJson } from "@tetris/crypto";
+import type { MessageEnvelope } from "@tetris/protocol";
 
 /**
  * Everything persisted on this device is sealed with the vault key (AES-256-GCM)
@@ -49,7 +49,7 @@ const STORES = ["meta", "kv", "sessions", "peers", "messages"] as const;
 const VERSION = 1;
 
 export function dbNameFor(userId: string) {
-  return `lop-vault-${userId}`;
+  return `tetris-vault-${userId}`;
 }
 
 function wrap<T>(req: IDBRequest<T>): Promise<T> {

@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Plus, X } from "lucide-react";
-import { POLL_MAX_OPTIONS, POLL_OPTION_MAX, POLL_QUESTION_MAX } from "@lop/protocol";
+import { POLL_MAX_OPTIONS, POLL_OPTION_MAX, POLL_QUESTION_MAX } from "@tetris/protocol";
 import { sendPoll } from "@/state/chat";
 import { Button, Modal } from "@/ui/kit";
 

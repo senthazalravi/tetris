@@ -6,7 +6,7 @@ import {
   replenishPrekeys,
   serializeDeviceKeys,
   type DeviceKeys,
-} from "@lop/crypto";
+} from "@tetris/crypto";
 import { api } from "@/lib/api";
 import { LocalDb } from "./localdb";
 

@@ -17,7 +17,7 @@ function apply(choice: ThemeChoice) {
 
 function initial(): ThemeChoice {
   try {
-    const v = localStorage.getItem("lop-theme");
+    const v = localStorage.getItem("tetris-theme");
     if (v === "dark" || v === "light" || v === "system") return v;
   } catch {
     /* storage blocked */
@@ -37,7 +37,7 @@ export const useTheme = create<ThemeState>((set, get) => ({
   resolved: resolve(initial()),
   setChoice(choice) {
     try {
-      localStorage.setItem("lop-theme", choice);
+      localStorage.setItem("tetris-theme", choice);
     } catch {
       /* ignore */
     }

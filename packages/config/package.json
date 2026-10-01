@@ -1,5 +1,5 @@
 {
-  "name": "@lop/config",
+  "name": "@tetris/config",
   "version": "0.1.0",
   "private": true,
   "type": "module",

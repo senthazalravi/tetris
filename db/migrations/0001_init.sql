@@ -1,4 +1,4 @@
--- Lop schema. Everything communication-related is ciphertext or routing metadata.
+-- Tetris schema. Everything communication-related is ciphertext or routing metadata.
 
 CREATE TABLE users (
   id TEXT PRIMARY KEY,

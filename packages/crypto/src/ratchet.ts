@@ -101,7 +101,7 @@ export interface WireMessage {
 /* ------------------------------------------------------------------ */
 
 function kdfRk(rk: Uint8Array, dhOut: Uint8Array): [Uint8Array, Uint8Array] {
-  const out = hkdf32(dhOut, rk, "lop/ratchet-rk/v1", 64);
+  const out = hkdf32(dhOut, rk, "tetris/ratchet-rk/v1", 64);
   return [out.slice(0, 32), out.slice(32, 64)];
 }
 
@@ -110,12 +110,12 @@ function kdfCk(ck: Uint8Array): [Uint8Array, Uint8Array] {
 }
 
 function messageAesKey(mk: Uint8Array): Uint8Array {
-  return hkdf32(mk, new Uint8Array(32), "lop/message-key/v1");
+  return hkdf32(mk, new Uint8Array(32), "tetris/message-key/v1");
 }
 
 function x3dhSecret(parts: Uint8Array[]): Uint8Array {
   const f = new Uint8Array(32).fill(0xff);
-  return hkdf32(concatBytes(f, ...parts), new Uint8Array(32), "lop/x3dh/v1");
+  return hkdf32(concatBytes(f, ...parts), new Uint8Array(32), "tetris/x3dh/v1");
 }
 
 function clone(state: RatchetState): RatchetState {

@@ -1,5 +1,5 @@
 /**
- * Low-level primitives shared by every part of Lop's E2EE stack.
+ * Low-level primitives shared by every part of Tetris's E2EE stack.
  * Everything here is either a vetted `@noble/*` primitive or native WebCrypto.
  */
 

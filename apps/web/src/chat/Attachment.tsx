@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Download, FileText, Mic, Music, Pause, Play, X } from "lucide-react";
-import type { AttachmentRef } from "@lop/protocol";
+import type { AttachmentRef } from "@tetris/protocol";
 import { formatBytes } from "@/lib/format";
 import { isPdf, mediaKind } from "@/lib/media";
 import { downloadAttachment, evictAttachment, loadAttachment } from "@/state/chat";

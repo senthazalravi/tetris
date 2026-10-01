@@ -3,7 +3,7 @@ import {
   MAX_ATTACHMENT_BYTES,
   MAX_USER_ATTACHMENT_BYTES,
   PENDING_ATTACHMENT_TTL_MS,
-} from "@lop/config";
+} from "@tetris/config";
 import { requireUnlocked, type AppEnv } from "../lib/session";
 import { hit } from "../lib/ratelimit";
 import { randomId } from "../lib/util";

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import { MAX_CIPHERTEXT_BYTES, MESSAGE_TTL_MS } from "@lop/config";
-import type { ConversationDto, SyncMessage } from "@lop/types";
+import { MAX_CIPHERTEXT_BYTES, MESSAGE_TTL_MS } from "@tetris/config";
+import type { ConversationDto, SyncMessage } from "@tetris/types";
 import type { Env } from "../env";
 import { avatarUrl, requireUnlocked, type AppEnv } from "../lib/session";
 import { hit } from "../lib/ratelimit";

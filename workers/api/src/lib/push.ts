@@ -1,4 +1,4 @@
-import type { RealtimeEvent } from "@lop/types";
+import type { RealtimeEvent } from "@tetris/types";
 import type { Env } from "../env";
 
 export async function pushToUser(

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { ONE_TIME_PREKEY_LOW_WATER } from "@lop/config";
+import { ONE_TIME_PREKEY_LOW_WATER } from "@tetris/config";
 import { requireUnlocked, type AppEnv } from "../lib/session";
 import { hit } from "../lib/ratelimit";
 import { pushToUser } from "../lib/push";

@@ -1,4 +1,4 @@
-import { MAX_ATTACHMENT_BYTES, MAX_VIDEO_BYTES } from "@lop/config";
+import { MAX_ATTACHMENT_BYTES, MAX_VIDEO_BYTES } from "@tetris/config";
 
 const INLINE_IMAGE = /^image\/(png|jpe?g|gif|webp|avif|bmp|svg\+xml)$/i;
 const INLINE_VIDEO = /^video\/(mp4|webm|quicktime|ogg|x-m4v)$/i;

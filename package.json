@@ -1,23 +1,24 @@
 {
-  "name": "lop",
+  "name": "tetris",
   "private": true,
   "version": "0.1.0",
-  "description": "Lop - web-only end-to-end encrypted messenger with 24h expiry and a vault passcode",
+  "description": "Tetris - web-only end-to-end encrypted messenger with 24h expiry and a vault passcode",
   "workspaces": [
     "apps/*",
     "packages/*",
     "workers/*"
   ],
   "scripts": {
-    "dev": "npm run dev -w @lop/web",
-    "dev:api": "npm run dev -w @lop/api",
-    "build": "npm run build -w @lop/web",
-    "deploy": "npm run build && npm run deploy -w @lop/api",
+    "dev": "npm run dev -w @tetris/web",
+    "dev:api": "npm run dev -w @tetris/api",
+    "build": "npm run build -w @tetris/web",
+    "deploy": "npm run build && npm run deploy -w @tetris/api",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "test:e2e": "tsx scripts/e2e.ts",
-    "db:migrate:local": "npm run db:migrate:local -w @lop/api",
-    "db:migrate:remote": "npm run db:migrate:remote -w @lop/api"
+    "users:seed": "tsx scripts/seed-users.ts",
+    "db:migrate:local": "npm run db:migrate:local -w @tetris/api",
+    "db:migrate:remote": "npm run db:migrate:remote -w @tetris/api"
   },
   "devDependencies": {
     "tsx": "^4.20.5"
