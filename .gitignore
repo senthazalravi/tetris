@@ -25,3 +25,4 @@ output/
 
 # Demo/predefined user credentials: never commit
 users.local.json
+groups.local.json

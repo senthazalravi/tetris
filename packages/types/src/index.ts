@@ -34,16 +34,36 @@ export interface ConversationPeer extends PublicUserCard {
   signingKey: string | null;
 }
 
+export interface GroupInfo {
+  name: string;
+  /** Every member, including the caller. */
+  members: ConversationPeer[];
+}
+
 export interface ConversationDto {
   id: ConversationId;
+  /** For a group this is a stand-in carrying the group name. */
   peer: ConversationPeer;
   lastMessageAt: number;
   blocked: boolean;
+  /** Present only for group conversations. */
+  group?: GroupInfo;
+}
+
+/** One encrypted copy of a group message, addressed to a single member. */
+export interface GroupCopy {
+  recipientUserId: UserId;
+  recipientDeviceId: DeviceId;
+  cryptoHeader: string;
+  ciphertext: string;
 }
 
 /** One row of the incremental sync feed. */
 export interface SyncMessage {
+  /** Row id: the sync cursor and receipts use this. */
   id: MessageId;
+  /** Stable message id shared by every copy of a group message (equals `id` for direct chats). */
+  messageId: MessageId;
   conversationId: ConversationId;
   senderUserId: UserId;
   senderDeviceId: DeviceId;
