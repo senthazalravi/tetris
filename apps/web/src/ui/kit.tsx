@@ -19,20 +19,17 @@ export function TetrisMark({ size = 28, className = "" }: { size?: number; class
         <rect x="24" y="10" width="16" height="16" rx="3" />
         <rect x="42" y="10" width="16" height="16" rx="3" />
       </g>
-      <rect x="24" y="28" width="16" height="16" rx="3" fill="#d4ff3a" />
+      <rect x="24" y="28" width="16" height="16" rx="3" fill="var(--accent)" />
     </svg>
   );
 }
 
 export function Wordmark({ size = 26 }: { size?: number }) {
   return (
-    <span className="inline-flex items-center gap-2 text-fg">
+    <span className="inline-flex items-center gap-2.5 text-fg">
       <TetrisMark size={size} />
-      <span
-        className="font-display font-extrabold leading-none tracking-tight"
-        style={{ fontSize: size * 0.95 }}
-      >
-        tetris
+      <span className="font-display leading-none" style={{ fontSize: Math.round(size * 1.15) }}>
+        Tetris
       </span>
     </span>
   );
@@ -133,7 +130,7 @@ export function Button({
   }[size];
   const variants = {
     primary:
-      "bg-accent text-onaccent shadow-[0_8px_24px_-10px_var(--pop)] hover:brightness-110 disabled:bg-s4 disabled:text-muted disabled:opacity-100 disabled:shadow-none",
+      "bg-accent text-onaccent hover:brightness-95 disabled:bg-s4 disabled:text-muted disabled:opacity-100",
     soft: "bg-s3 text-fg hover:bg-s4",
     ghost: "text-muted hover:bg-s3 hover:text-fg",
     danger: "bg-danger/15 text-danger hover:bg-danger/25",
@@ -233,7 +230,7 @@ export function Modal({
         }`}
       >
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-line bg-s1/90 px-5 py-4 backdrop-blur">
-          <h2 className="font-display text-lg font-bold">{title}</h2>
+          <h2 className="font-display text-2xl">{title}</h2>
           <IconButton label="Close" onClick={onClose} className="-mr-2">
             <X size={18} />
           </IconButton>
@@ -269,9 +266,19 @@ export function Ring({
     muted: "var(--faint)",
   }[tone];
   return (
-    <div className="relative inline-flex items-center justify-center" style={{ width: size, height: size }}>
+    <div
+      className="relative inline-flex items-center justify-center"
+      style={{ width: size, height: size }}
+    >
       <svg width={size} height={size} className="-rotate-90">
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--s3)" strokeWidth={stroke} />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke="var(--s3)"
+          strokeWidth={stroke}
+        />
         <circle
           cx={size / 2}
           cy={size / 2}
@@ -293,7 +300,6 @@ export function Ring({
 export function Spinner({ size = 18 }: { size?: number }) {
   return <Loader2 size={size} className="spin text-muted" />;
 }
-
 
 /* ---------------- passcode ---------------- */
 
