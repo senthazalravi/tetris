@@ -7,6 +7,8 @@ import {
   CheckCheck,
   Clock,
   Eraser,
+  Keyboard,
+  KeyRound,
   Lock,
   LogOut,
   Monitor,
@@ -17,10 +19,11 @@ import {
   ShieldCheck,
   Sun,
   Timer,
+  Trash2,
   UserMinus,
   Send,
 } from "lucide-react";
-import { DISPLAY_NAME_MAX } from "@lop/config";
+import { DISPLAY_NAME_MAX, PASSCODE_MIN_LENGTH, PASSWORD_MIN_LENGTH } from "@lop/config";
 import type { ConversationDto } from "@lop/types";
 import { api, ApiError } from "@/lib/api";
 import { formatFull, formatRemaining } from "@/lib/format";
@@ -197,6 +200,44 @@ function Row({
         {hint && <span className="block text-xs font-normal text-muted">{hint}</span>}
       </span>
     </button>
+  );
+}
+
+export function ChatPrivacyLearnModal({ onClose }: { onClose: () => void }) {
+  return (
+    <Modal title="How this chat stays private" onClose={onClose}>
+      <div className="space-y-3">
+        <div className="flex gap-3 rounded-2xl border border-line bg-s2 p-4">
+          <ShieldCheck size={20} className="mt-0.5 shrink-0 text-pop" aria-hidden />
+          <div className="min-w-0 text-sm leading-relaxed">
+            <p className="font-semibold">End-to-end encryption</p>
+            <p className="mt-1.5 text-muted">
+              Text, photos, voice notes, and files are encrypted in your browser before they leave your device.
+              Only you and the person you're chatting with can read them—the service stores ciphertext, not the
+              plain content.
+            </p>
+          </div>
+        </div>
+        <div className="flex gap-3 rounded-2xl border border-line bg-s2 p-4">
+          <Timer size={20} className="mt-0.5 shrink-0 text-pop" aria-hidden />
+          <div className="min-w-0 text-sm leading-relaxed">
+            <p className="font-semibold">Messages that vanish</p>
+            <p className="mt-1.5 text-muted">
+              Every message and attachment expires about 24 hours after it is sent, based on the server clock—not
+              when it was read. After that, copies on the server are removed. Either of you can still screenshot or
+              save something before it expires.
+            </p>
+          </div>
+        </div>
+        <p className="text-xs leading-relaxed text-faint">
+          Encryption protects message content, not all metadata (for example who you talk to and when). Open contact
+          info from the header to compare your safety number with this person.
+        </p>
+      </div>
+      <div className="mt-5 flex justify-end">
+        <Button onClick={onClose}>Got it</Button>
+      </div>
+    </Modal>
   );
 }
 
@@ -503,7 +544,7 @@ function randomSeed() {
 }
 
 export function Profile({ onClose }: { onClose: () => void }) {
-  const { user, updateUser, logout } = useSession();
+  const { user, updateUser, logout, changePassword, changeVaultPasscode, deleteAccount } = useSession();
   const { choice, setChoice } = useTheme();
   const [name, setName] = useState(user?.displayName ?? "");
   const [saving, setSaving] = useState(false);
@@ -511,6 +552,23 @@ export function Profile({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [seed, setSeed] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const [curPw, setCurPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [pwBusy, setPwBusy] = useState(false);
+  const [pwError, setPwError] = useState<string | null>(null);
+
+  const [curPass, setCurPass] = useState("");
+  const [newPass, setNewPass] = useState("");
+  const [confirmPass, setConfirmPass] = useState("");
+  const [passBusy, setPassBusy] = useState(false);
+  const [passError, setPassError] = useState<string | null>(null);
+
+  const [delPw, setDelPw] = useState("");
+  const [delBusy, setDelBusy] = useState(false);
+  const [delError, setDelError] = useState<string | null>(null);
+
   if (!user) return null;
 
   const shown = seed ? squiggleUrl(seed) : user.avatarUrl || squiggleUrl(user.id);
@@ -553,6 +611,64 @@ export function Profile({ onClose }: { onClose: () => void }) {
     setSeed(next);
     void upload(svgToPng(squiggleUrl(next)), next);
   }
+
+  async function onChangePassword(e: FormEvent) {
+    e.preventDefault();
+    setPwError(null);
+    if (newPw.length < PASSWORD_MIN_LENGTH) {
+      return setPwError(`Use at least ${PASSWORD_MIN_LENGTH} characters.`);
+    }
+    if (newPw !== confirmPw) return setPwError("New passwords don't match.");
+    setPwBusy(true);
+    try {
+      await changePassword({ currentPassword: curPw, newPassword: newPw });
+      setCurPw("");
+      setNewPw("");
+      setConfirmPw("");
+      toast("Password updated");
+    } catch (err) {
+      setPwError(err instanceof Error ? err.message : "Couldn't change password");
+    } finally {
+      setPwBusy(false);
+    }
+  }
+
+  async function onChangePasscode(e: FormEvent) {
+    e.preventDefault();
+    setPassError(null);
+    if (newPass.length < PASSCODE_MIN_LENGTH) {
+      return setPassError(`Use at least ${PASSCODE_MIN_LENGTH} characters.`);
+    }
+    if (newPass !== confirmPass) return setPassError("New passcodes don't match.");
+    setPassBusy(true);
+    try {
+      await changeVaultPasscode({ currentPasscode: curPass, newPasscode: newPass });
+      setCurPass("");
+      setNewPass("");
+      setConfirmPass("");
+      toast("Vault passcode updated");
+    } catch (err) {
+      setPassError(err instanceof Error ? err.message : "Couldn't change passcode");
+    } finally {
+      setPassBusy(false);
+    }
+  }
+
+  async function onDeleteAccount(e: FormEvent) {
+    e.preventDefault();
+    setDelError(null);
+    if (!delPw) return setDelError("Enter your account password to confirm.");
+    setDelBusy(true);
+    try {
+      await deleteAccount(delPw);
+      onClose();
+    } catch (err) {
+      setDelError(err instanceof Error ? err.message : "Couldn't delete account");
+      setDelBusy(false);
+    }
+  }
+
+  const modKey = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
 
   return (
     <Modal title="Your profile" onClose={onClose}>
@@ -649,6 +765,120 @@ export function Profile({ onClose }: { onClose: () => void }) {
             </button>
           ))}
         </div>
+      </div>
+
+      <form onSubmit={onChangePassword} className="mt-6 space-y-3">
+        <div className="flex items-center gap-2 text-[13px] font-medium text-muted">
+          <KeyRound size={15} /> Change account password
+        </div>
+        <Field
+          label="Current password"
+          type="password"
+          autoComplete="current-password"
+          value={curPw}
+          onChange={(e) => setCurPw(e.target.value)}
+        />
+        <Field
+          label="New password"
+          type="password"
+          autoComplete="new-password"
+          value={newPw}
+          onChange={(e) => setNewPw(e.target.value)}
+          minLength={PASSWORD_MIN_LENGTH}
+          hint={`At least ${PASSWORD_MIN_LENGTH} characters`}
+        />
+        <Field
+          label="Confirm new password"
+          type="password"
+          autoComplete="new-password"
+          value={confirmPw}
+          onChange={(e) => setConfirmPw(e.target.value)}
+        />
+        {pwError && <p role="alert" className="rounded-xl bg-danger/10 px-4 py-3 text-sm text-danger">{pwError}</p>}
+        <Button type="submit" busy={pwBusy} disabled={!curPw || !newPw || !confirmPw} variant="soft" block>
+          Update password
+        </Button>
+      </form>
+
+      <form onSubmit={onChangePasscode} className="mt-6 space-y-3">
+        <div className="flex items-center gap-2 text-[13px] font-medium text-muted">
+          <Lock size={15} /> Change vault passcode
+        </div>
+        <Field
+          label="Current passcode"
+          type="password"
+          autoComplete="current-password"
+          value={curPass}
+          onChange={(e) => setCurPass(e.target.value)}
+        />
+        <Field
+          label="New passcode"
+          type="password"
+          autoComplete="new-password"
+          value={newPass}
+          onChange={(e) => setNewPass(e.target.value)}
+          minLength={PASSCODE_MIN_LENGTH}
+          hint={`At least ${PASSCODE_MIN_LENGTH} characters`}
+        />
+        <Field
+          label="Confirm new passcode"
+          type="password"
+          autoComplete="new-password"
+          value={confirmPass}
+          onChange={(e) => setConfirmPass(e.target.value)}
+        />
+        {passError && (
+          <p role="alert" className="rounded-xl bg-danger/10 px-4 py-3 text-sm text-danger">
+            {passError}
+          </p>
+        )}
+        <Button type="submit" busy={passBusy} disabled={!curPass || !newPass || !confirmPass} variant="soft" block>
+          Update passcode
+        </Button>
+      </form>
+
+      <form onSubmit={onDeleteAccount} className="mt-6 space-y-3">
+        <div className="flex items-center gap-2 text-[13px] font-medium text-danger">
+          <Trash2 size={15} /> Delete account
+        </div>
+        <p className="text-xs leading-relaxed text-muted">
+          Permanently deletes your account and local vault data on this device. This cannot be undone.
+        </p>
+        <Field
+          label="Type your password to confirm"
+          type="password"
+          autoComplete="current-password"
+          value={delPw}
+          onChange={(e) => setDelPw(e.target.value)}
+        />
+        {delError && (
+          <p role="alert" className="rounded-xl bg-danger/10 px-4 py-3 text-sm text-danger">
+            {delError}
+          </p>
+        )}
+        <Button type="submit" busy={delBusy} disabled={!delPw} variant="danger" block>
+          Delete my account
+        </Button>
+      </form>
+
+      <div className="mt-6 rounded-2xl border border-line bg-s2 p-4">
+        <div className="mb-2 flex items-center gap-2 text-[13px] font-medium text-muted">
+          <Keyboard size={15} /> Keyboard shortcuts
+        </div>
+        <ul className="space-y-1.5 text-sm text-muted">
+          <li>
+            <kbd className="rounded bg-s3 px-1.5 py-0.5 text-xs text-fg">{modKey}+K</kbd> Sidebar search
+          </li>
+          <li>
+            <kbd className="rounded bg-s3 px-1.5 py-0.5 text-xs text-fg">{modKey}+F</kbd> Search in chat
+          </li>
+          <li>
+            <kbd className="rounded bg-s3 px-1.5 py-0.5 text-xs text-fg">{modKey}+N</kbd> New chat
+          </li>
+          <li>
+            <kbd className="rounded bg-s3 px-1.5 py-0.5 text-xs text-fg">Esc</kbd> Close dialogs
+          </li>
+        </ul>
       </div>
 
       <div className="mt-6 grid grid-cols-2 gap-2">
