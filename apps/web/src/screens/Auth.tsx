@@ -20,13 +20,15 @@ function strength(pw: string): { score: number; label: string } {
   return { score, label: ["Too short", "Okay", "Good", "Strong", "Excellent"][score]! };
 }
 
+export type AuthMode = "login" | "register" | "forgot";
+
 export function Auth({
   mode,
   onMode,
   onBack,
 }: {
-  mode: "login" | "register";
-  onMode: (m: "login" | "register") => void;
+  mode: AuthMode;
+  onMode: (m: AuthMode) => void;
   onBack: () => void;
 }) {
   return (
@@ -60,8 +62,8 @@ export function Auth({
           </ul>
         </div>
         <p className="relative text-xs text-faint">
-          Lost your passcode? You can always sign in, but your chats will be cleared. That is
-          the point.
+          Forgot your account password? Confirm your email and vault passcode to choose a new one.
+          Your vault passcode itself cannot be recovered.
         </p>
       </aside>
 
@@ -80,11 +82,14 @@ export function Auth({
         </div>
 
         <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center py-8">
-          {mode === "login" ? (
-            <LoginForm onSwitch={() => onMode("register")} />
-          ) : (
-            <RegisterForm onSwitch={() => onMode("login")} />
+          {mode === "login" && (
+            <LoginForm
+              onSwitch={() => onMode("register")}
+              onForgot={() => onMode("forgot")}
+            />
           )}
+          {mode === "register" && <RegisterForm onSwitch={() => onMode("login")} />}
+          {mode === "forgot" && <ForgotForm onBack={() => onMode("login")} />}
         </div>
       </main>
     </div>
@@ -99,6 +104,7 @@ function PasswordField({
   hint,
   error,
   minLength,
+  required = true,
 }: {
   label: string;
   value: string;
@@ -107,6 +113,7 @@ function PasswordField({
   hint?: string;
   error?: string | null;
   minLength?: number;
+  required?: boolean;
 }) {
   const [show, setShow] = useState(false);
   return (
@@ -120,7 +127,7 @@ function PasswordField({
         hint={hint}
         error={error}
         minLength={minLength}
-        required
+        required={required}
         className="[&_input]:pr-12"
       />
       <button
@@ -135,7 +142,13 @@ function PasswordField({
   );
 }
 
-function LoginForm({ onSwitch }: { onSwitch: () => void }) {
+function LoginForm({
+  onSwitch,
+  onForgot,
+}: {
+  onSwitch: () => void;
+  onForgot: () => void;
+}) {
   const login = useSession((s) => s.login);
   const [id, setId] = useState("");
   const [pw, setPw] = useState("");
@@ -177,12 +190,23 @@ function LoginForm({ onSwitch }: { onSwitch: () => void }) {
         required
         autoFocus
       />
-      <PasswordField
-        label="Account password"
-        value={pw}
-        onChange={setPw}
-        autoComplete="current-password"
-      />
+      <div className="space-y-2">
+        <PasswordField
+          label="Account password"
+          value={pw}
+          onChange={setPw}
+          autoComplete="current-password"
+        />
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={onForgot}
+            className="text-sm font-medium text-muted transition hover:text-fg"
+          >
+            Forgot password?
+          </button>
+        </div>
+      </div>
       <Turnstile onToken={setCaptcha} resetKey={resetKey} />
       {error && (
         <p role="alert" className="rounded-xl bg-danger/10 px-4 py-3 text-sm text-danger">
@@ -196,6 +220,136 @@ function LoginForm({ onSwitch }: { onSwitch: () => void }) {
         New to Lop?{" "}
         <button type="button" onClick={onSwitch} className="font-medium text-fg underline decoration-pop decoration-2 underline-offset-4">
           Create an account
+        </button>
+      </p>
+    </form>
+  );
+}
+
+function ForgotForm({ onBack }: { onBack: () => void }) {
+  const resetAccountPassword = useSession((s) => s.resetAccountPassword);
+  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
+  const [passcode, setPasscode] = useState("");
+  const [pw, setPw] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const [captcha, setCaptcha] = useState<string | null>(null);
+  const [resetKey, setResetKey] = useState(0);
+  const pwStrength = strength(pw);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (pw.length < PASSWORD_MIN_LENGTH) {
+      return setError(`Use at least ${PASSWORD_MIN_LENGTH} characters for the new password.`);
+    }
+    if (pw !== pw2) return setError("New passwords do not match.");
+    if (turnstileEnabled && !captcha) return setError("Complete the verification first.");
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await resetAccountPassword({
+        email,
+        username,
+        passcode: passcode.trim() || undefined,
+        password: pw,
+        turnstileToken: captcha ?? undefined,
+      });
+      setDone(res.message);
+      setBusy(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not reset password");
+      setResetKey((k) => k + 1);
+      setCaptcha(null);
+      setBusy(false);
+    }
+  }
+
+  if (done) {
+    return (
+      <div className="fade-in space-y-5">
+        <div>
+          <h1 className="font-display text-4xl font-extrabold tracking-tight">Password updated</h1>
+          <p className="mt-2 text-muted">{done}</p>
+        </div>
+        <Button size="lg" block onClick={onBack}>
+          Sign in
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="fade-in space-y-5">
+      <div>
+        <h1 className="font-display text-4xl font-extrabold tracking-tight">Forgot password</h1>
+        <p className="mt-2 text-muted">
+          Confirm your email and @username. If your vault is still active, also enter your{" "}
+          <b className="text-fg">vault passcode</b> (not the account password). Then choose a new
+          account password.
+        </p>
+      </div>
+      <Field
+        label="Email"
+        type="email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        autoComplete="email"
+        required
+        autoFocus
+      />
+      <Field
+        label="Username"
+        value={username}
+        onChange={(e) => setUsername(e.target.value)}
+        placeholder="@yourname"
+        autoCapitalize="none"
+        spellCheck={false}
+        autoComplete="username"
+        required
+        hint="Must match the account exactly"
+      />
+      <PasswordField
+        label="Vault passcode (if vault is still active)"
+        value={passcode}
+        onChange={setPasscode}
+        autoComplete="off"
+        required={false}
+        hint="Required when chats weren't wiped. Leave blank only if your vault was already cleared."
+      />
+      <PasswordField
+        label="New account password"
+        value={pw}
+        onChange={setPw}
+        autoComplete="new-password"
+        minLength={PASSWORD_MIN_LENGTH}
+        hint={pw ? pwStrength.label : `At least ${PASSWORD_MIN_LENGTH} characters`}
+      />
+      <PasswordField
+        label="Confirm new password"
+        value={pw2}
+        onChange={setPw2}
+        autoComplete="new-password"
+        minLength={PASSWORD_MIN_LENGTH}
+      />
+      <Turnstile onToken={setCaptcha} resetKey={resetKey} />
+      {error && (
+        <p role="alert" className="rounded-xl bg-danger/10 px-4 py-3 text-sm text-danger">
+          {error}
+        </p>
+      )}
+      <Button type="submit" size="lg" block busy={busy}>
+        {busy ? "Updating…" : "Update account password"}
+      </Button>
+      <p className="text-center text-sm text-muted">
+        <button
+          type="button"
+          onClick={onBack}
+          className="font-medium text-fg underline decoration-pop decoration-2 underline-offset-4"
+        >
+          Back to sign in
         </button>
       </p>
     </form>

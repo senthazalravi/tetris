@@ -41,6 +41,13 @@ interface SessionState {
     turnstileToken?: string;
   }): Promise<void>;
   login(input: { login: string; password: string; turnstileToken?: string }): Promise<void>;
+  resetAccountPassword(input: {
+    email: string;
+    username: string;
+    passcode?: string;
+    password: string;
+    turnstileToken?: string;
+  }): Promise<{ message: string }>;
   unlock(passcode: string): Promise<{ ok: boolean }>;
   expire(): Promise<void>;
   setupVault(passcode: string): Promise<void>;
@@ -177,6 +184,33 @@ export const useSession = create<SessionState>((set, get) => ({
       user: res.user,
       challenge: res.challenge ? toActive(res.challenge) : null,
       notice: null,
+    });
+  },
+
+  async resetAccountPassword(input) {
+    const pre = await api.post<{ vaultSalt: string; requiresVault: boolean }>(
+      "/auth/password-reset/preflight",
+      { email: input.email },
+    );
+    if (pre.requiresVault && !input.passcode?.trim()) {
+      throw new ApiError(
+        400,
+        "This account still has an active vault. Enter your vault passcode (not the account password).",
+      );
+    }
+    const authSalt = generateSaltB64();
+    const authProof = await deriveAuthProof(input.password, authSalt);
+    let vaultVerifier: string | undefined;
+    if (pre.requiresVault) {
+      vaultVerifier = (await deriveVaultSecrets(input.passcode!.trim(), pre.vaultSalt)).verifier;
+    }
+    return api.post<{ message: string }>("/auth/password-reset", {
+      email: input.email,
+      username: input.username,
+      vaultVerifier: vaultVerifier ?? null,
+      authSalt,
+      authProof,
+      turnstileToken: input.turnstileToken,
     });
   },
 
