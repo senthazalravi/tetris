@@ -25,15 +25,24 @@ import {
 import { Button } from "@/ui/kit";
 import { useSession } from "@/state/session";
 
-const COLORS: Record<PieceKind, string> = {
-  I: "#3ee0b0",
-  O: "#ffd23f",
-  T: "#b277ff",
-  S: "#6ee05c",
-  Z: "#ff6464",
-  J: "#5a8cff",
-  L: "#ffa03a",
+const FALLBACK: Record<PieceKind, string> = {
+  I: "#6a9bcc",
+  O: "#d4a23a",
+  T: "#9a7bb5",
+  S: "#788c5d",
+  Z: "#c4553e",
+  J: "#4a6fa5",
+  L: "#d97757",
 };
+
+/** Read the tetromino colours once per draw so a theme change is picked up. */
+function pieceColors(): Record<PieceKind, string> {
+  const out = { ...FALLBACK };
+  for (const k of Object.keys(out) as PieceKind[]) {
+    out[k] = cssVar(`--t-${k.toLowerCase()}`, FALLBACK[k]);
+  }
+  return out;
+}
 
 const NEXT_SHAPES: Record<PieceKind, number[][]> = {
   I: [[1, 1, 1, 1]],
@@ -68,6 +77,7 @@ function cssVar(name: string, fallback: string) {
   return v || fallback;
 }
 
+/** A flat, softly rounded block with a hairline inset. No gradients. */
 function drawBlock(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -75,11 +85,36 @@ function drawBlock(
   size: number,
   color: string,
 ) {
-  const pad = Math.max(1, size * 0.06);
+  const pad = Math.max(1, size * 0.04);
+  const w = size - pad * 2;
+  const r = size * 0.16;
   ctx.fillStyle = color;
   ctx.beginPath();
-  ctx.roundRect(x + pad, y + pad, size - pad * 2, size - pad * 2, size * 0.18);
+  ctx.roundRect(x + pad, y + pad, w, w, r);
   ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.22)";
+  ctx.lineWidth = Math.max(1, size * 0.035);
+  ctx.beginPath();
+  ctx.roundRect(x + pad + 0.5, y + pad + 0.5, w - 1, w - 1, r);
+  ctx.stroke();
+}
+
+/** The landing spot of the falling piece: an outline, not a second piece. */
+function drawGhost(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  color: string,
+) {
+  const pad = Math.max(1.5, size * 0.07);
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = 0.55;
+  ctx.lineWidth = Math.max(1, size * 0.06);
+  ctx.beginPath();
+  ctx.roundRect(x + pad, y + pad, size - pad * 2, size - pad * 2, size * 0.14);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
 }
 
 /**
@@ -223,9 +258,10 @@ export function Game() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, boardW, boardH);
 
-    ctx.fillStyle = cssVar("--s2", "#14171b");
+    const colors = pieceColors();
+    ctx.fillStyle = cssVar("--card", "#2d2c2a");
     ctx.fillRect(0, 0, boardW, boardH);
-    ctx.strokeStyle = cssVar("--line", "rgba(255,255,255,.075)");
+    ctx.strokeStyle = cssVar("--line", "rgba(250,249,245,.1)");
     ctx.lineWidth = 1;
     for (let c = 1; c < COLS; c++) {
       ctx.beginPath();
@@ -242,7 +278,7 @@ export function Game() {
 
     game.board.forEach((row, r) =>
       row.forEach((kind, c) => {
-        if (kind) drawBlock(ctx, c * cell, r * cell, cell, COLORS[kind]);
+        if (kind) drawBlock(ctx, c * cell, r * cell, cell, colors[kind]);
       }),
     );
 
@@ -253,12 +289,10 @@ export function Game() {
         row.forEach((on, c) => {
           if (!on) return;
           if (gy !== piece.y) {
-            ctx.globalAlpha = 0.22;
-            drawBlock(ctx, (piece.x + c) * cell, (gy + r) * cell, cell, COLORS[piece.kind]);
-            ctx.globalAlpha = 1;
+            drawGhost(ctx, (piece.x + c) * cell, (gy + r) * cell, cell, colors[piece.kind]);
           }
           if (piece.y + r >= 0) {
-            drawBlock(ctx, (piece.x + c) * cell, (piece.y + r) * cell, cell, COLORS[piece.kind]);
+            drawBlock(ctx, (piece.x + c) * cell, (piece.y + r) * cell, cell, colors[piece.kind]);
           }
         }),
       );
@@ -270,7 +304,7 @@ export function Game() {
     const canvas = nextRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
-    const size = 12;
+    const size = 16;
     const dpr = window.devicePixelRatio || 1;
     canvas.width = 4 * size * dpr;
     canvas.height = 2 * size * dpr;
@@ -281,7 +315,7 @@ export function Game() {
     const oy = ((2 - shape.length) * size) / 2;
     shape.forEach((row, r) =>
       row.forEach((on, c) => {
-        if (on) drawBlock(ctx, ox + c * size, oy + r * size, size, COLORS[game.next]);
+        if (on) drawBlock(ctx, ox + c * size, oy + r * size, size, pieceColors()[game.next]);
       }),
     );
   }, [game.next]);
@@ -306,14 +340,10 @@ export function Game() {
           style={{ width: wide ? RAIL_WIDE : RAIL_NARROW }}
         >
           <RailCard label="Score" grow={1}>
-            <div className="font-mono text-3xl font-semibold leading-none tabular">
-              {game.score}
-            </div>
+            <div className="font-display text-5xl leading-none tabular">{game.score}</div>
           </RailCard>
           <RailCard label="Lines" grow={1}>
-            <div className="font-mono text-3xl font-semibold leading-none tabular">
-              {game.lines}
-            </div>
+            <div className="font-display text-5xl leading-none tabular">{game.lines}</div>
           </RailCard>
           <RailCard label="Next" grow={1.1}>
             <canvas ref={nextRef} className="block h-8 w-16" />
@@ -337,7 +367,7 @@ export function Game() {
             <dl className="hidden w-full grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1.5 text-[11px] text-muted md:grid">
               <Key k="← →" label="Move" />
               <Key k="↑" label="Rotate" />
-              <Key k="↓" label="Soft drop" />
+              <Key k="↓" label="Soft" />
               <Key k="Space" label="Drop" />
               <Key k="P" label="Pause" />
             </dl>
@@ -346,14 +376,14 @@ export function Game() {
 
         <div ref={roomRef} className="flex min-h-0 min-w-0 flex-1 items-center justify-center">
           <div
-            className="relative overflow-hidden rounded-2xl border border-line shadow-[var(--shadow)]"
+            className="relative overflow-hidden rounded-xl border border-lines"
             style={{ width: boardW, height: boardH, visibility: cell > 0 ? "visible" : "hidden" }}
           >
             <canvas ref={canvasRef} className="block" style={{ width: boardW, height: boardH }} />
 
             {!started && (
               <Overlay>
-                <h2 className="font-display text-2xl font-extrabold">Ready?</h2>
+                <h2 className="font-display text-4xl">Ready?</h2>
                 <Button size="lg" onClick={() => setStarted(true)}>
                   <Play size={16} /> Start
                 </Button>
@@ -361,7 +391,7 @@ export function Game() {
             )}
             {paused && !game.over && (
               <Overlay>
-                <h2 className="font-display text-2xl font-extrabold">Paused</h2>
+                <h2 className="font-display text-4xl">Paused</h2>
                 <Button size="lg" onClick={() => setPaused(false)}>
                   <Play size={16} /> Resume
                 </Button>
@@ -369,9 +399,10 @@ export function Game() {
             )}
             {game.over && (
               <Overlay>
-                <h2 className="font-display text-2xl font-extrabold">Game over</h2>
+                <h2 className="font-display text-4xl">Game over</h2>
                 <p className="text-sm text-muted">
-                  {game.score} points · {game.lines} lines
+                  <b className="font-semibold text-fg">{game.score}</b> points ·{" "}
+                  <b className="font-semibold text-fg">{game.lines}</b> lines
                 </p>
                 <Button size="lg" onClick={playAgain}>
                   <Play size={16} /> Play again
@@ -411,7 +442,7 @@ export function Game() {
 
 function Overlay({ children }: { children: React.ReactNode }) {
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-bg/80 text-center backdrop-blur-sm">
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-bg/85 text-center">
       {children}
     </div>
   );
@@ -434,13 +465,11 @@ function RailCard({
 }) {
   return (
     <section
-      className="flex min-h-0 flex-col justify-between overflow-hidden rounded-2xl border border-line bg-s1/80 p-3 backdrop-blur-sm"
+      className="panel flex min-h-0 flex-col justify-between overflow-hidden rounded-xl p-3"
       style={{ flex: `${grow} 1 0%` }}
     >
       <header className="flex h-5 items-center justify-between">
-        <h3 className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted">
-          {label}
-        </h3>
+        <h3 className="text-[11px] font-medium text-muted">{label}</h3>
         {action}
       </header>
       <div className="flex min-h-0 items-end">{children}</div>

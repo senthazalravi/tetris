@@ -81,7 +81,6 @@ export function ChatApp() {
             : "flex flex-1"
         } relative h-full min-w-0 flex-col border-line`}
       >
-        <div className="glow-lime pointer-events-none absolute inset-0" />
 
         <header className="relative flex items-center gap-2 px-4 pb-1 pt-3">
           {user && (
@@ -92,7 +91,7 @@ export function ChatApp() {
             >
               <Avatar name={user.displayName} seed={user.id} url={user.avatarUrl} size={40} />
               <span className="min-w-0">
-                <span className="block truncate font-display text-[15px] font-bold leading-tight">
+                <span className="block truncate text-[15px] font-semibold leading-tight">
                   {user.displayName}
                 </span>
                 <span className="block truncate text-xs text-muted">@{user.username}</span>

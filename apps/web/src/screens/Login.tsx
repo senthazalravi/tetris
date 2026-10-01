@@ -81,7 +81,8 @@ export function Login({ onOpenLegal }: { onOpenLegal: (id: LegalPageId) => void 
     if (!PASSCODE_PATTERN.test(passcode)) {
       return setError(`The passcode is exactly ${PASSCODE_LENGTH} digits.`);
     }
-    if (!locked && turnstileEnabled && !captcha) return setError("Complete the verification first.");
+    if (!locked && turnstileEnabled && !captcha)
+      return setError("Complete the verification first.");
     setBusy(true);
     setError(null);
     try {
@@ -101,8 +102,6 @@ export function Login({ onOpenLegal }: { onOpenLegal: (id: LegalPageId) => void 
 
   return (
     <div className="relative flex h-full flex-col overflow-y-auto bg-bg">
-      <div className="glow-lime pointer-events-none absolute inset-0" />
-      <div className="dotgrid pointer-events-none absolute inset-0 opacity-60 [mask-image:radial-gradient(60%_60%_at_50%_45%,black,transparent)]" />
       <header className="relative flex items-center justify-between px-6 py-5">
         <Wordmark size={26} />
         <ThemeButton />
@@ -111,15 +110,13 @@ export function Login({ onOpenLegal }: { onOpenLegal: (id: LegalPageId) => void 
       <main className="relative flex flex-1 items-center justify-center px-5 py-4">
         <form
           onSubmit={submit}
-          className="pop-in w-full max-w-sm rounded-[2rem] border border-line bg-s1/85 p-8 text-center shadow-[var(--shadow)] backdrop-blur"
+          className="panel pop-in w-full max-w-sm rounded-3xl p-9 text-center shadow-[var(--shadow)]"
         >
           <div className="mb-5 flex justify-center">
-            <Ring progress={remaining / UNLOCK_WINDOW_MS} size={160} stroke={9} tone={tone}>
+            <Ring progress={remaining / UNLOCK_WINDOW_MS} size={156} stroke={3} tone={tone}>
               <div className="flex flex-col items-center">
                 <span
-                  className={`font-mono text-5xl font-semibold tabular ${
-                    tone === "danger" ? "text-danger" : ""
-                  }`}
+                  className={`font-display text-6xl leading-none tabular-nums ${tone === "danger" ? "text-danger" : ""}`}
                 >
                   {seconds}
                 </span>
@@ -130,7 +127,7 @@ export function Login({ onOpenLegal }: { onOpenLegal: (id: LegalPageId) => void 
             </Ring>
           </div>
 
-          <h1 className="font-display text-2xl font-extrabold tracking-tight">Welcome back</h1>
+          <h1 className="font-display text-[36px] leading-none">Welcome back</h1>
           <p className="mt-1 text-sm text-muted">Enter your username and passcode.</p>
 
           <input

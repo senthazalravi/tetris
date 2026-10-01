@@ -260,7 +260,7 @@ export function Composer({
           : "";
 
   return (
-    <div className="relative border-t border-line bg-s1 px-3 pb-3 pt-2 sm:px-4">
+    <div className="relative border-t border-line bg-bg px-3 pb-3 pt-2 sm:px-4">
       {reply && (
         <div className="fade-in mb-2 flex items-start gap-3 rounded-xl border-l-[3px] border-pop bg-s2 px-3 py-2">
           <div className="min-w-0 flex-1 text-[13px]">
@@ -417,7 +417,7 @@ export function Composer({
             onBlur={() => stopTyping(conv.id)}
             placeholder={file ? "Add a caption…" : "Write a message"}
             aria-label="Message"
-            className="max-h-40 min-h-11 flex-1 resize-none rounded-2xl border border-line bg-s2 px-4 py-2.5 text-[15px] leading-snug outline-none transition placeholder:text-faint focus:border-pop focus:ring-4 focus:ring-pop/15"
+            className="max-h-40 min-h-11 flex-1 resize-none rounded-3xl border border-line bg-s2 px-4 py-2.5 text-[15px] leading-snug outline-none transition placeholder:text-faint focus:border-pop focus:ring-4 focus:ring-pop/15"
           />
 
           {canSend || editing ? (

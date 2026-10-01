@@ -21,7 +21,6 @@ export function Legal({
 }) {
   return (
     <div className="relative h-full overflow-y-auto bg-bg">
-      <div className="glow-lime pointer-events-none absolute inset-0 opacity-60" />
       <header className="relative mx-auto flex max-w-3xl items-center justify-between px-6 py-6">
         <button
           type="button"
@@ -36,7 +35,7 @@ export function Legal({
 
       <main className="relative mx-auto max-w-3xl px-6 pb-16">
         <p className="text-xs uppercase tracking-[0.18em] text-faint">Legal</p>
-        <h1 className="mt-2 font-display text-4xl font-extrabold tracking-tight">{TITLES[page]}</h1>
+        <h1 className="mt-2 font-display text-5xl">{TITLES[page]}</h1>
         <p className="mt-3 text-sm text-muted">Last updated: 1 October 2026</p>
 
         <article className="prose-legal mt-10 space-y-8 text-[15px] leading-relaxed text-muted">
@@ -52,7 +51,7 @@ export function Legal({
 }
 
 function H({ children }: { children: ReactNode }) {
-  return <h2 className="font-display text-xl font-bold text-fg">{children}</h2>;
+  return <h2 className="font-display text-2xl text-fg">{children}</h2>;
 }
 
 function PrivacyBody() {

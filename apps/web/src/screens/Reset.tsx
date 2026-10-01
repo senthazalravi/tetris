@@ -70,7 +70,6 @@ export function Reset() {
 
   return (
     <div className="relative flex h-full flex-col overflow-y-auto bg-bg">
-      <div className="glow-lime pointer-events-none absolute inset-0" />
       <header className="relative flex items-center justify-between px-6 py-5">
         <Wordmark size={26} />
         <div className="flex items-center gap-1">
@@ -87,7 +86,7 @@ export function Reset() {
             <div className="flex gap-4 rounded-3xl border border-danger/30 bg-danger/10 p-5">
               <reason.icon className="mt-0.5 shrink-0 text-danger" size={22} />
               <div>
-                <h2 className="font-display text-lg font-bold text-danger">{reason.title}</h2>
+                <h2 className="font-display text-xl text-danger">{reason.title}</h2>
                 <p className="mt-1 text-sm leading-relaxed text-muted">{reason.body}</p>
               </div>
             </div>
@@ -102,7 +101,7 @@ export function Reset() {
                 <KeyRound size={20} />
               </div>
               <div>
-                <h1 className="font-display text-xl font-extrabold">Choose a new passcode</h1>
+                <h1 className="font-display text-3xl">Choose a new passcode</h1>
                 <p className="text-sm text-muted">New encryption keys will be created</p>
               </div>
             </div>
@@ -153,10 +152,9 @@ export function Reset() {
 export function Replaced() {
   return (
     <div className="relative flex h-full flex-col items-center justify-center gap-5 bg-bg px-6 text-center">
-      <div className="glow-lime pointer-events-none absolute inset-0" />
       <div className="relative max-w-sm space-y-4">
         <Wordmark size={30} />
-        <h1 className="font-display text-3xl font-extrabold">Opened somewhere else</h1>
+        <h1 className="font-display text-4xl">Opened somewhere else</h1>
         <p className="text-muted">
           This account was unlocked in another browser, which now holds your keys. Tetris supports one
           active device at a time.
