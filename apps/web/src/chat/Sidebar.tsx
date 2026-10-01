@@ -1,6 +1,8 @@
 import { useCallback, useMemo, useState, type MouseEvent } from "react";
 import {
   Ban,
+  Bell,
+  BellOff,
   Check,
   CheckCheck,
   Eraser,
@@ -9,6 +11,8 @@ import {
   MessageSquarePlus,
   MoreHorizontal,
   Paperclip,
+  Pin,
+  PinOff,
   Search,
   UserMinus,
   WifiOff,
@@ -21,6 +25,8 @@ import {
   removeContact,
   selectConversation,
   setBlocked,
+  setMuted,
+  setPinned,
   toast,
   useChat,
 } from "@/state/chat";
@@ -53,8 +59,10 @@ interface MenuState {
 
 export function Sidebar({ onNew, onProfile }: { onNew: () => void; onProfile: () => void }) {
   const user = useSession((s) => s.user)!;
-  const { conversations, messages, activeId, typing, connection, ready, nicknames } = useChat();
+  const { conversations, messages, activeId, typing, connection, ready, nicknames, muted, pinned } =
+    useChat();
   const [q, setQ] = useState("");
+  const [unreadOnly, setUnreadOnly] = useState(false);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [infoFor, setInfoFor] = useState<string | null>(null);
   const now = useNow(30_000);
@@ -64,10 +72,19 @@ export function Sidebar({ onNew, onProfile }: { onNew: () => void; onProfile: ()
     return conversations
       .map((c) => {
         const list = messages[c.id] ?? [];
-        const last = [...list].reverse().find((m) => m.content.kind !== "system" && m.content.kind !== "reaction" && m.content.kind !== "vote" && m.content.kind !== "edit");
+        const last = [...list]
+          .reverse()
+          .find(
+            (m) =>
+              m.content.kind !== "system" &&
+              m.content.kind !== "reaction" &&
+              m.content.kind !== "vote" &&
+              m.content.kind !== "edit",
+          );
         const unread = list.filter((m) => m.unread).length;
         return { c, last, unread, at: last?.createdAt ?? c.lastMessageAt };
       })
+      .filter(({ unread }) => !unreadOnly || unread > 0)
       .filter(
         ({ c }) =>
           !term ||
@@ -75,8 +92,15 @@ export function Sidebar({ onNew, onProfile }: { onNew: () => void; onProfile: ()
           (nicknames[c.peer.userId] ?? "").toLowerCase().includes(term) ||
           c.peer.username.toLowerCase().includes(term),
       )
-      .sort((a, b) => b.at - a.at);
-  }, [conversations, messages, q, nicknames]);
+      .sort((a, b) => {
+        const ap = pinned[a.c.id] ?? 0;
+        const bp = pinned[b.c.id] ?? 0;
+        if (ap && bp) return bp - ap;
+        if (ap) return -1;
+        if (bp) return 1;
+        return b.at - a.at;
+      });
+  }, [conversations, messages, q, nicknames, unreadOnly, pinned]);
 
   const openMenuAt = (c: ConversationDto, x: number, y: number) => setMenu({ conv: c, x, y });
   const closeMenu = useCallback(() => setMenu(null), []);
@@ -101,12 +125,36 @@ export function Sidebar({ onNew, onProfile }: { onNew: () => void; onProfile: ()
         <div className="relative">
           <Search size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
           <input
+            id="sidebar-search"
+            data-sidebar-search
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Filter your chats"
             aria-label="Filter your chats"
             className="h-10 w-full rounded-xl bg-s2 pl-10 pr-3 text-sm outline-none transition placeholder:text-faint focus:ring-2 focus:ring-pop/40"
           />
+        </div>
+        <div className="mt-2 flex gap-1.5" role="group" aria-label="Chat filter">
+          <button
+            type="button"
+            onClick={() => setUnreadOnly(false)}
+            aria-pressed={!unreadOnly}
+            className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+              !unreadOnly ? "bg-s4 text-fg" : "bg-s2 text-muted hover:text-fg"
+            }`}
+          >
+            All
+          </button>
+          <button
+            type="button"
+            onClick={() => setUnreadOnly(true)}
+            aria-pressed={unreadOnly}
+            className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+              unreadOnly ? "bg-s4 text-fg" : "bg-s2 text-muted hover:text-fg"
+            }`}
+          >
+            Unread
+          </button>
         </div>
       </div>
 
@@ -135,14 +183,16 @@ export function Sidebar({ onNew, onProfile }: { onNew: () => void; onProfile: ()
               <MessageSquarePlus size={28} />
             </div>
             <h2 className="font-display text-lg font-bold">
-              {q ? "No chats match" : "Nothing here yet"}
+              {q || unreadOnly ? "No chats match" : "Nothing here yet"}
             </h2>
             <p className="mt-1 text-sm text-muted">
               {q
                 ? "Try a different name."
-                : "Start a chat with someone's exact @username. Everything you send vanishes after 24 hours."}
+                : unreadOnly
+                  ? "You're all caught up."
+                  : "Start a chat with someone's exact @username. Everything you send vanishes after 24 hours."}
             </p>
-            {!q && (
+            {!q && !unreadOnly && (
               <button
                 onClick={onNew}
                 className="mt-5 rounded-full bg-accent px-5 py-2.5 text-sm font-medium text-onaccent shadow-[0_8px_24px_-10px_var(--pop)] hover:brightness-110"
@@ -157,6 +207,8 @@ export function Sidebar({ onNew, onProfile }: { onNew: () => void; onProfile: ()
               const active = c.id === activeId;
               const isTyping = (typing[c.id] ?? 0) > Date.now();
               const mine = last?.direction === "out" && !last.deleted;
+              const isPinned = Boolean(pinned[c.id]);
+              const isMuted = Boolean(muted[c.id]);
               const onContext = (e: MouseEvent) => {
                 e.preventDefault();
                 openMenuAt(c, e.clientX, e.clientY);
@@ -173,7 +225,11 @@ export function Sidebar({ onNew, onProfile }: { onNew: () => void; onProfile: ()
                     <Avatar name={c.peer.displayName} seed={c.peer.userId} url={c.peer.avatarUrl} size={48} />
                     <span className="min-w-0 flex-1">
                       <span className="flex items-baseline justify-between gap-2">
-                        <span className="truncate font-semibold">{nameOf(nicknames, c.peer)}</span>
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <span className="truncate font-semibold">{nameOf(nicknames, c.peer)}</span>
+                          {isPinned && <Pin size={12} className="shrink-0 text-pop" aria-label="Pinned" />}
+                          {isMuted && <BellOff size={12} className="shrink-0 text-faint" aria-label="Muted" />}
+                        </span>
                         <span
                           className={`shrink-0 text-[11px] transition-opacity group-hover:opacity-0 ${
                             unread ? "font-semibold text-pop" : "text-faint"
@@ -256,11 +312,13 @@ function ChatMenu({
   onInfo: () => void;
 }) {
   const { conv } = state;
+  const isPinned = useChat((s) => Boolean(s.pinned[conv.id]));
+  const isMuted = useChat((s) => Boolean(s.muted[conv.id]));
   const [confirm, setConfirm] = useState<"clear" | "remove" | null>(null);
   const ref = useOutside<HTMLDivElement>(true, onClose);
 
   const width = 240;
-  const height = 300;
+  const height = 360;
   const left = Math.max(8, Math.min(state.x, window.innerWidth - width - 8));
   const top = Math.max(8, Math.min(state.y, window.innerHeight - height - 8));
 
@@ -295,6 +353,22 @@ function ChatMenu({
         }}
       >
         Contact info &amp; nickname
+      </Item>
+      <Item
+        icon={isPinned ? PinOff : Pin}
+        onClick={() =>
+          run(() => setPinned(conv.id, !isPinned), isPinned ? "Unpinned" : "Pinned")
+        }
+      >
+        {isPinned ? "Unpin" : "Pin"}
+      </Item>
+      <Item
+        icon={isMuted ? Bell : BellOff}
+        onClick={() =>
+          run(() => setMuted(conv.id, !isMuted), isMuted ? "Unmuted" : "Muted")
+        }
+      >
+        {isMuted ? "Unmute" : "Mute"}
       </Item>
       <div className="my-1 h-px bg-line" />
       {confirm === "clear" ? (

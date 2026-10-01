@@ -44,6 +44,33 @@ export function ChatApp() {
     };
   }, []);
 
+  // Global shortcuts when ready (ctrl/cmd combos work even while typing).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+      const key = e.key.toLowerCase();
+      if (key === "k") {
+        e.preventDefault();
+        const el = document.querySelector<HTMLInputElement>("[data-sidebar-search]");
+        el?.focus();
+        el?.select();
+        return;
+      }
+      if (key === "f") {
+        e.preventDefault();
+        window.dispatchEvent(new Event("lop:chat-search"));
+        return;
+      }
+      if (key === "n") {
+        e.preventDefault();
+        setModal("new");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const active = conversations.find((c) => c.id === activeId) ?? null;
 
   return (
