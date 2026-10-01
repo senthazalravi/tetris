@@ -22,3 +22,6 @@ docs/REFERENCE_NOTES.md
 
 .playwright-cli/
 output/
+
+# Demo/predefined user credentials: never commit
+users.local.json

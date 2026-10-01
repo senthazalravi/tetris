@@ -7,10 +7,12 @@
  */
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   createDeviceKeys,
   decryptBlob,
-  deriveAuthProof,
   deriveVaultSecrets,
   encryptBlob,
   exportUploadBundle,
@@ -23,14 +25,24 @@ import {
   type DeviceKeys,
   type PeerBundle,
   type RatchetState,
-} from "@lop/crypto";
+} from "@tetris/crypto";
 
-const BASE = process.env.LOP_URL ?? "http://127.0.0.1:8787";
+const BASE = process.env.TETRIS_URL ?? "http://127.0.0.1:8787";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const rand = () => Math.random().toString(36).slice(2, 8);
 
 class Client {
-  cookie = "";
+  /** Cookie jar: the session cookie plus the trusted-browser cookie. */
+  jar = new Map<string, string>();
+  get cookie() {
+    return [...this.jar].map(([k, v]) => `${k}=${v}`).join("; ");
+  }
+  /** Same physical browser as `other` (shares its trusted-device cookie). */
+  sameBrowserAs(other: Client) {
+    const d = other.jar.get("tetris_device");
+    if (d) this.jar.set("tetris_device", d);
+    return this;
+  }
   vault = "";
   keys!: DeviceKeys;
   deviceId = "";
@@ -38,15 +50,13 @@ class Client {
   constructor(
     public name: string,
     public username = `${name}_${rand()}`,
-    public email = `${name}_${rand()}@example.com`,
-    public password = "correct horse battery staple",
-    public passcode = "2468",
+    public passcode = "24681357",
   ) {}
 
   async req(method: string, path: string, body?: unknown, raw?: Uint8Array) {
     const headers: Record<string, string> = { Origin: BASE };
     if (this.cookie) headers.Cookie = this.cookie;
-    if (this.vault) headers["X-Lop-Vault"] = this.vault;
+    if (this.vault) headers["X-Tetris-Vault"] = this.vault;
     let payload: BodyInit | undefined;
     if (raw) {
       headers["Content-Type"] = "application/octet-stream";
@@ -55,9 +65,15 @@ class Client {
       headers["Content-Type"] = "application/json";
       payload = JSON.stringify(body);
     }
-    const res = await fetch(`${BASE}/api/v1${path}`, { method, headers, body: payload });
-    const set = res.headers.get("set-cookie");
-    if (set) this.cookie = set.split(";")[0]!.includes("=;") ? "" : set.split(";")[0]!;
+    // Seeding shells out for a few seconds; a pooled keep-alive socket may be dead by then.
+    const send = () => fetch(`${BASE}/api/v1${path}`, { method, headers, body: payload });
+    const res = await send().catch(() => send());
+    for (const line of res.headers.getSetCookie()) {
+      const [pair] = line.split(";");
+      const [k, ...v] = pair!.split("=");
+      if (v.join("=") === "") this.jar.delete(k!);
+      else this.jar.set(k!, v.join("="));
+    }
     const isBin = res.headers.get("content-type")?.includes("octet-stream");
     const data = isBin
       ? new Uint8Array(await res.arrayBuffer())
@@ -65,23 +81,25 @@ class Client {
     return { status: res.status, data: data as any };
   }
 
+  /** Accounts are predefined: seed this user the way an admin would, then sign in. */
   async register() {
-    const authSalt = generateSaltB64();
-    const vaultSalt = generateSaltB64();
-    const v = await deriveVaultSecrets(this.passcode, vaultSalt);
-    const r = await this.req("POST", "/auth/register", {
-      email: this.email,
-      username: this.username,
-      displayName: this.name,
-      authSalt,
-      authProof: await deriveAuthProof(this.password, authSalt),
-      vaultSalt,
-      vaultVerifier: v.verifier,
-    });
-    assert.equal(r.status, 201, JSON.stringify(r.data));
-    this.vault = r.data.vaultToken;
-    this.userId = r.data.user.id;
+    const file = join(tmpdir(), `tetris-e2e-${rand()}.json`);
+    writeFileSync(
+      file,
+      JSON.stringify([
+        { username: this.username, email: this.email, displayName: this.name, passcode: this.passcode },
+      ]),
+    );
+    execSync(`npx tsx scripts/seed-users.ts "${file}"`, { stdio: "pipe" });
+    const r = await this.login();
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    const u = await this.unlock(r.data.challenge);
+    assert.equal(u.data.unlocked, true, JSON.stringify(u.data));
+    this.userId = u.data.user.id;
     await this.setupDevice();
+  }
+  get email() {
+    return `${this.username}@example.com`;
   }
   userId = "";
 
@@ -93,14 +111,10 @@ class Client {
     this.sessions.clear();
   }
 
-  async login(login = this.username) {
+  /** Step one of sign-in: username only; the response carries the 30s challenge. */
+  async login(username = this.username) {
     this.vault = "";
-    const pre = await this.req("POST", "/auth/prelogin", { login });
-    const r = await this.req("POST", "/auth/login", {
-      login,
-      authProof: await deriveAuthProof(this.password, pre.data.authSalt),
-    });
-    return r;
+    return this.req("POST", "/auth/start", { username });
   }
 
   async unlock(challenge: { id: string; vaultSalt: string }, passcode = this.passcode) {
@@ -113,19 +127,29 @@ class Client {
     return r;
   }
 
-  async setupVault(passcode = this.passcode) {
+  /** Expired passcode: confirm the email on file, choose a new passcode. */
+  async reset(passcode = this.passcode, email = this.email) {
     const vaultSalt = generateSaltB64();
     const v = await deriveVaultSecrets(passcode, vaultSalt);
-    const r = await this.req("POST", "/auth/vault", { vaultSalt, vaultVerifier: v.verifier });
-    assert.equal(r.status, 201, JSON.stringify(r.data));
-    this.vault = r.data.vaultToken;
-    await this.setupDevice();
+    const r = await this.req("POST", "/auth/reset", {
+      username: this.username,
+      email,
+      vaultSalt,
+      vaultVerifier: v.verifier,
+    });
+    if (r.status === 201) {
+      this.vault = r.data.vaultToken;
+      await this.setupDevice();
+    }
+    return r;
   }
 
   async openChat(peer: Client) {
-    const l = await this.req("GET", `/users/lookup?username=${peer.username}`);
+    const l = await this.req("GET", `/users/search?q=${peer.username}`);
     assert.equal(l.status, 200);
-    const c = await this.req("POST", "/conversations", { peerUserId: l.data.userId });
+    const hit = l.data.users.find((u: any) => u.username === peer.username);
+    assert.ok(hit, "search finds the user");
+    const c = await this.req("POST", "/conversations", { peerUserId: hit.userId });
     assert.equal(c.status, 201, JSON.stringify(c.data));
     return c.data.conversation as { id: string; peer: { deviceId: string } };
   }
@@ -173,7 +197,7 @@ let step = 0;
 const ok = (label: string) => console.log(`  ✓ ${String(++step).padStart(2, "0")} ${label}`);
 
 async function main() {
-  console.log(`Lop e2e → ${BASE}\n`);
+  console.log(`Tetris e2e → ${BASE}\n`);
 
   const alice = new Client("alice");
   const bob = new Client("bob");
@@ -181,7 +205,7 @@ async function main() {
   await alice.register();
   await bob.register();
   await carol.register();
-  ok("register three accounts (password + passcode derived client-side)");
+  ok("seed three predefined accounts and sign in (username + 8-digit passcode)");
 
   // --- auth surface ---------------------------------------------------
   let r = await alice.login();
@@ -193,9 +217,24 @@ async function main() {
   assert.equal(noVault.data.code, "VAULT_LOCKED");
   ok("cookie alone unlocks nothing: data endpoints are 403 VAULT_LOCKED");
 
-  const badLogin = await new Client("x", alice.username, "x@example.com", "definitely not the password").login();
-  assert.equal(badLogin.status, 401);
-  ok("wrong account password rejected");
+  // A stranger's browser (no trusted-device cookie) can fail without wiping anything.
+  const stranger = new Client("x", alice.username, alice.passcode);
+  const sr = await stranger.login();
+  assert.ok(sr.data.challenge?.id);
+  const strangerWrong = await stranger.unlock(sr.data.challenge, "00000000");
+  assert.equal(strangerWrong.data.unlocked, false);
+  assert.equal(strangerWrong.data.wiped, false);
+  const ghost = new Client("ghost", `nobody_${rand()}`);
+  const gr = await ghost.login();
+  const ghostWrong = await ghost.unlock(gr.data.challenge, "00000000");
+  assert.equal(ghostWrong.data.unlocked, false);
+  assert.equal(ghostWrong.data.wiped, false);
+  assert.equal(
+    JSON.stringify(Object.keys(ghostWrong.data).sort()),
+    JSON.stringify(Object.keys(strangerWrong.data).sort()),
+    "unknown and known usernames fail identically",
+  );
+  ok("a stranger or unknown username fails like a wrong passcode and wipes nothing");
 
   const resume = await alice.req("POST", "/auth/resume");
   assert.equal(resume.data.challenge.id, r.data.challenge.id);
@@ -215,12 +254,18 @@ async function main() {
   await carol.unlock(r.data.challenge);
 
   // --- contacts -------------------------------------------------------
-  const partial = await alice.req("GET", `/users/lookup?username=${bob.username.slice(0, 5)}`);
-  assert.equal(partial.status, 404);
-  const exact = await alice.req("GET", `/users/lookup?username=${bob.username.toUpperCase()}`);
-  assert.equal(exact.status, 200);
+  const part = bob.username.slice(2, 6);
+  const found = await alice.req("GET", `/users/search?q=${part.toUpperCase()}`);
+  assert.equal(found.status, 200);
+  assert.ok(found.data.users.some((u: any) => u.username === bob.username), "substring match, case-insensitive");
+  const selfSearch = await alice.req("GET", `/users/search?q=${alice.username}`);
+  assert.ok(!selfSearch.data.users.some((u: any) => u.userId === alice.userId), "never lists yourself");
+  const none = await alice.req("GET", "/users/search?q=zzzzqqqq");
+  assert.deepEqual(none.data.users, []);
+  const wildcard = await alice.req("GET", "/users/search?q=%25");
+  assert.deepEqual(wildcard.data.users, [], "LIKE wildcards are not honoured");
   assert.equal((await alice.req("GET", "/users")).status, 404);
-  ok("exact (case-insensitive) lookup only: partial → 404, no list endpoint");
+  ok("search: prefix/substring, case-insensitive, no self, no wildcards, no full listing");
 
   const conv = await alice.openChat(bob);
   const aliceContacts = await alice.req("GET", "/contacts");
@@ -241,7 +286,7 @@ async function main() {
   assert.equal(rx.out[0]!.text, secret);
   assert.ok(!JSON.stringify(rx.raw).includes(secret), "wire data never contains plaintext");
   const dump = execSync(
-    `npx wrangler d1 execute lop-db --local --json --command "SELECT hex(ciphertext) AS c FROM messages"`,
+    `npx wrangler d1 execute tetris-db --local --json --command "SELECT hex(ciphertext) AS c FROM messages"`,
     { cwd: "workers/api", encoding: "utf8" },
   );
   assert.ok(!dump.includes(Buffer.from(secret).toString("hex").toUpperCase()));
@@ -298,7 +343,7 @@ async function main() {
 
   // --- 24h expiry ------------------------------------------------------
   execSync(
-    `npx wrangler d1 execute lop-db --local --command "UPDATE messages SET expires_at = 1 WHERE id = '${sent.id}'"`,
+    `npx wrangler d1 execute tetris-db --local --command "UPDATE messages SET expires_at = 1 WHERE id = '${sent.id}'"`,
     { cwd: "workers/api", stdio: "ignore" },
   );
   const expired = await bob.req("GET", "/sync?ts=0&id=");
@@ -307,7 +352,7 @@ async function main() {
   assert.equal(cron.status, 200);
   await sleep(500);
   const left = execSync(
-    `npx wrangler d1 execute lop-db --local --json --command "SELECT COUNT(*) AS n FROM messages WHERE id = '${sent.id}'"`,
+    `npx wrangler d1 execute tetris-db --local --json --command "SELECT COUNT(*) AS n FROM messages WHERE id = '${sent.id}'"`,
     { cwd: "workers/api", encoding: "utf8" },
   );
   assert.ok(left.includes('"n": 0'), left);
@@ -316,22 +361,28 @@ async function main() {
   // --- WRONG passcode wipe ---------------------------------------------
   const before = await alice.req("GET", "/conversations");
   assert.equal(before.data.conversations.length, 1);
-  const a2 = new Client("alice", alice.username, alice.email, alice.password, alice.passcode);
+  const a2 = new Client("alice", alice.username, alice.passcode).sameBrowserAs(alice);
   a2.userId = alice.userId;
   r = await a2.login();
-  const wrong = await a2.unlock(r.data.challenge, "0000");
+  const wrong = await a2.unlock(r.data.challenge, "00000000");
   assert.equal(wrong.data.wiped, true);
   assert.equal(wrong.data.reason, "WRONG_PASSCODE");
   assert.equal(wrong.data.vaultSetupRequired, true);
   assert.equal((await a2.req("GET", "/contacts")).status, 403);
-  await a2.setupVault("1357");
+  const expiredStart = await a2.login();
+  assert.equal(expiredStart.data.expired, true, "wiped account reports an expired passcode");
+  const wrongEmail = await a2.reset("13572468", "someone-else@example.com");
+  assert.equal(wrongEmail.status, 403);
+  const reset = await a2.reset("13572468");
+  assert.equal(reset.status, 201, JSON.stringify(reset.data));
+  assert.equal((await a2.reset("99999999")).status, 403, "a live passcode cannot be reset");
   assert.equal((await a2.req("GET", "/contacts")).data.contacts.length, 0);
   assert.equal((await a2.req("GET", "/conversations")).data.conversations.length, 0);
   const acct = await a2.req("GET", "/users/me");
   assert.equal(acct.data.user.username, alice.username);
   const relog = await a2.login();
   assert.equal(relog.status, 200);
-  ok("wrong passcode: contacts + chats wiped, account/profile survive, can log in again");
+  ok("wrong passcode: chats wiped, passcode expires; email-confirmed reset works, profile survives");
 
   // old vault token of the wiped user is dead everywhere
   assert.equal((await alice.req("GET", "/contacts")).status, 403);
@@ -344,7 +395,7 @@ async function main() {
   ok("peer is told keys changed (DEVICE_CHANGED) so it can re-key");
 
   // --- TIMEOUT wipe: explicit expiry call --------------------------------
-  const b2 = new Client("bob", bob.username, bob.email, bob.password, bob.passcode);
+  const b2 = new Client("bob", bob.username, bob.passcode).sameBrowserAs(bob);
   r = await b2.login();
   const early = await b2.req("POST", "/auth/unlock", { challengeId: r.data.challenge.id, verifier: null });
   assert.equal(early.status, 400);
@@ -356,14 +407,14 @@ async function main() {
   ok("timeout: cannot be declared early; after 30s the server wipes");
 
   // --- TIMEOUT wipe: tab closed, discovered lazily on next contact -----------
-  const c2 = new Client("carol", carol.username, carol.email, carol.password, carol.passcode);
+  const c2 = new Client("carol", carol.username, carol.passcode).sameBrowserAs(carol);
   r = await c2.login();
   assert.ok(r.data.challenge);
   console.log("    …abandoning the challenge for 31s (tab closed)");
   await sleep(31_000);
-  const c3 = new Client("carol", carol.username, carol.email, carol.password, carol.passcode);
+  const c3 = new Client("carol", carol.username, carol.passcode).sameBrowserAs(carol);
   const relogin = await c3.login();
-  assert.equal(relogin.data.vaultSetupRequired, true, "abandoned challenge already wiped");
+  assert.equal(relogin.data.expired, true, "abandoned challenge already wiped");
   ok("abandoned challenge (tab closed) is wiped on the account's next request");
 
   // --- late correct passcode must not save you ------------------------------
