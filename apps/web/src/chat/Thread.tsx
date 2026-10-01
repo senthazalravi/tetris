@@ -8,18 +8,13 @@ import {
   Info,
   Search,
   ShieldCheck,
+  Users,
   Upload,
   X,
 } from "lucide-react";
 import type { ConversationDto } from "@tetris/types";
 import { formatDay } from "@/lib/format";
-import {
-  messageSearchText,
-  nameOf,
-  selectConversation,
-  toast,
-  useChat,
-} from "@/state/chat";
+import { messageSearchText, nameOf, selectConversation, toast, useChat } from "@/state/chat";
 import { useSession } from "@/state/session";
 import { Avatar, IconButton } from "@/ui/kit";
 import { useNow } from "@/ui/hooks";
@@ -27,7 +22,7 @@ import type { LocalMessage } from "@/state/localdb";
 import { Bubble } from "./Bubble";
 import { Composer } from "./Composer";
 import { MediaGallery } from "./MediaGallery";
-import { ChatPrivacyLearnModal, ContactInfo } from "./Modals";
+import { ChatPrivacyLearnModal, ContactInfo, GroupInfo } from "./Modals";
 
 const EMPTY: LocalMessage[] = [];
 
@@ -37,6 +32,14 @@ export function Thread({ conv }: { conv: ConversationDto }) {
   const typing = useChat((s) => s.typing[conv.id]);
   const nicknames = useChat((s) => s.nicknames);
   const peerName = nameOf(nicknames, conv.peer);
+  const group = conv.group;
+  const memberNames = useMemo(
+    () =>
+      group
+        ? Object.fromEntries(group.members.map((u) => [u.userId, nameOf(nicknames, u)]))
+        : undefined,
+    [group, nicknames],
+  );
   useNow(30_000);
   const [info, setInfo] = useState(false);
   const [privacyLearn, setPrivacyLearn] = useState(false);
@@ -147,12 +150,19 @@ export function Thread({ conv }: { conv: ConversationDto }) {
       );
       prev = undefined;
     }
-    const first = !prev || prev.direction !== m.direction || m.createdAt - prev.createdAt > 5 * 60_000;
+    const first =
+      !prev || prev.direction !== m.direction || m.createdAt - prev.createdAt > 5 * 60_000;
     items.push(
       <Bubble
         key={m.id}
         m={m}
         peerName={peerName}
+        names={memberNames}
+        senderName={
+          group && m.direction === "in" && (!prev || prev.senderId !== m.senderId)
+            ? memberNames?.[m.senderId]
+            : undefined
+        }
         myId={myId}
         first={first}
         highlight={m.id === highlightId}
@@ -175,7 +185,7 @@ export function Thread({ conv }: { conv: ConversationDto }) {
       onDragOver={(e) => e.preventDefault()}
       onDrop={onDrop}
     >
-      <header className="flex items-center gap-1 border-b border-line bg-s1 px-2 py-2.5 sm:gap-2 sm:px-4">
+      <header className="flex items-center gap-1 border-b border-line bg-bg px-2 py-2.5 sm:gap-2 sm:px-4">
         <IconButton
           label="Close chat (Esc)"
           onClick={() => {
@@ -186,17 +196,35 @@ export function Thread({ conv }: { conv: ConversationDto }) {
           <ArrowLeft size={20} className="md:hidden" />
           <X size={20} className="hidden md:block" />
         </IconButton>
-        <button onClick={() => setInfo(true)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-          <Avatar name={conv.peer.displayName} seed={conv.peer.userId} url={conv.peer.avatarUrl} size={42} />
+        <button
+          onClick={() => setInfo(true)}
+          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+        >
+          {group ? (
+            <span className="flex size-[42px] shrink-0 items-center justify-center rounded-full bg-s3 text-muted">
+              <Users size={20} />
+            </span>
+          ) : (
+            <Avatar
+              name={conv.peer.displayName}
+              seed={conv.peer.userId}
+              url={conv.peer.avatarUrl}
+              size={42}
+            />
+          )}
           <span className="min-w-0">
-            <span className="block truncate font-display text-[17px] font-bold leading-tight">
+            <span className="block truncate font-display text-[21px] leading-tight">
               {peerName}
             </span>
             <span className="block truncate text-xs text-muted">
               {isTyping ? (
                 <span className="text-pop">typing…</span>
               ) : (
-                <>@{conv.peer.username} · vanishes after 24h</>
+                <>
+                  {group
+                    ? `${group.members.length} members · vanishes after 7 days`
+                    : `@${conv.peer.username} · vanishes after 24h`}
+                </>
               )}
             </span>
           </span>
@@ -211,7 +239,7 @@ export function Thread({ conv }: { conv: ConversationDto }) {
         <IconButton label="Media & files" onClick={() => setGallery(true)}>
           <Images size={20} />
         </IconButton>
-        <IconButton label="Contact info" onClick={() => setInfo(true)}>
+        <IconButton label={group ? "Group info" : "Contact info"} onClick={() => setInfo(true)}>
           <Info size={20} />
         </IconButton>
       </header>
@@ -237,13 +265,13 @@ export function Thread({ conv }: { conv: ConversationDto }) {
             className="h-9 min-w-0 flex-1 rounded-xl bg-s2 px-3 text-sm outline-none transition placeholder:text-faint focus:ring-2 focus:ring-pop/40"
           />
           <span className="shrink-0 tabular text-xs text-muted">
-            {query.trim()
-              ? matches.length
-                ? `${matchIdx + 1}/${matches.length}`
-                : "0/0"
-              : ""}
+            {query.trim() ? (matches.length ? `${matchIdx + 1}/${matches.length}` : "0/0") : ""}
           </span>
-          <IconButton label="Previous match" onClick={() => goMatch(-1)} disabled={matches.length === 0}>
+          <IconButton
+            label="Previous match"
+            onClick={() => goMatch(-1)}
+            disabled={matches.length === 0}
+          >
             <ChevronUp size={18} />
           </IconButton>
           <IconButton label="Next match" onClick={() => goMatch(1)} disabled={matches.length === 0}>
@@ -261,13 +289,18 @@ export function Thread({ conv }: { conv: ConversationDto }) {
         </div>
       )}
 
-      <div className="dotgrid relative min-h-0 flex-1">
-        <div ref={scroller} onScroll={onScroll} className="absolute inset-0 overflow-y-auto px-3 pb-3 pt-2 sm:px-6">
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={scroller}
+          onScroll={onScroll}
+          className="absolute inset-0 overflow-y-auto px-3 pb-3 pt-2 sm:px-6"
+        >
           <div className="mx-auto max-w-3xl">
-            <div className="mx-auto my-4 flex max-w-sm items-start gap-2 rounded-2xl bg-s1/90 px-4 py-3 text-xs leading-relaxed text-muted backdrop-blur">
+            <div className="mx-auto my-4 flex max-w-sm items-start gap-2 panel rounded-2xl px-4 py-3 text-xs leading-relaxed text-muted">
               <ShieldCheck size={15} className="mt-0.5 shrink-0 text-pop" aria-hidden />
               <p>
-                Messages here are end-to-end encrypted and disappear 24 hours after they're sent.{" "}
+                Messages here are end-to-end encrypted and disappear {group ? "7 days" : "24 hours"}{" "}
+                after they're sent.{" "}
                 <button
                   type="button"
                   onClick={() => setPrivacyLearn(true)}
@@ -309,14 +342,21 @@ export function Thread({ conv }: { conv: ConversationDto }) {
         <div className="fade-in pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-bg/85 backdrop-blur-sm">
           <div className="flex flex-col items-center gap-3 rounded-3xl border-2 border-dashed border-pop px-12 py-10 text-center">
             <Upload size={34} className="text-pop" />
-            <div className="font-display text-xl font-bold">Drop to attach</div>
+            <div className="font-display text-2xl">Drop to attach</div>
             <div className="text-sm text-muted">Encrypted in your browser before it's uploaded</div>
           </div>
         </div>
       )}
 
-      {privacyLearn && <ChatPrivacyLearnModal onClose={() => setPrivacyLearn(false)} />}
-      {info && <ContactInfo conv={conv} onClose={() => setInfo(false)} />}
+      {privacyLearn && (
+        <ChatPrivacyLearnModal group={Boolean(group)} onClose={() => setPrivacyLearn(false)} />
+      )}
+      {info &&
+        (group ? (
+          <GroupInfo conv={conv} onClose={() => setInfo(false)} />
+        ) : (
+          <ContactInfo conv={conv} onClose={() => setInfo(false)} />
+        ))}
       {gallery && <MediaGallery convId={conv.id} onClose={() => setGallery(false)} />}
     </section>
   );

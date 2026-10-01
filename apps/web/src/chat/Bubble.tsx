@@ -50,7 +50,9 @@ export function Ticks({ state }: { state: LocalMessage["state"] }) {
     case "accepted":
       return <Check size={15} strokeWidth={2.4} className="opacity-90" aria-label="Sent" />;
     case "delivered":
-      return <CheckCheck size={16} strokeWidth={2.4} className="opacity-90" aria-label="Delivered" />;
+      return (
+        <CheckCheck size={16} strokeWidth={2.4} className="opacity-90" aria-label="Delivered" />
+      );
     case "read":
       return (
         <CheckCheck
@@ -93,12 +95,18 @@ function BubbleImpl({
   myId,
   first,
   highlight,
+  names,
+  senderName,
 }: {
   m: LocalMessage;
   peerName: string;
   myId: string;
   first: boolean;
   highlight?: boolean;
+  /** Group chats: userId to display name. */
+  names?: Record<string, string>;
+  /** Group chats: show this author above an incoming bubble. */
+  senderName?: string;
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number; up: boolean } | null>(null);
   const [more, setMore] = useState(false);
@@ -114,18 +122,14 @@ function BubbleImpl({
   const c = m.content;
 
   const out = m.direction === "out";
-  const canForward =
-    !m.deleted && (c.kind === "text" || c.kind === "file" || c.kind === "poll");
+  const canForward = !m.deleted && (c.kind === "text" || c.kind === "file" || c.kind === "poll");
 
   function openMenu() {
     const r = trigger.current?.getBoundingClientRect();
     if (!r) return;
     const width = 224;
     const up = r.bottom + 340 > window.innerHeight && r.top > 340;
-    const x = Math.min(
-      Math.max(8, out ? r.right - width : r.left),
-      window.innerWidth - width - 8,
-    );
+    const x = Math.min(Math.max(8, out ? r.right - width : r.left), window.innerWidth - width - 8);
     setMenu({ x, y: up ? window.innerHeight - r.top + 6 : r.bottom + 6, up });
   }
 
@@ -210,6 +214,9 @@ function BubbleImpl({
       data-mid={m.id}
     >
       <div className={`bubble ${out ? "out" : "in"} ${bare ? "!p-1 !pb-0.5" : ""}`}>
+        {senderName && !out && (
+          <div className="mb-0.5 text-[12px] font-semibold text-pop">{senderName}</div>
+        )}
         {"forwarded" in c && c.forwarded && (
           <div
             className={`mb-1 flex items-center gap-1 text-[11px] font-medium italic ${
@@ -226,7 +233,7 @@ function BubbleImpl({
             }`}
           >
             <div className={`font-semibold ${out ? "text-[#c9f7e8]" : "text-pop"}`}>
-              {c.replyTo.senderId === myId ? "You" : peerName}
+              {c.replyTo.senderId === myId ? "You" : (names?.[c.replyTo.senderId] ?? peerName)}
             </div>
             <div className={`line-clamp-2 ${out ? "text-white/90" : "opacity-80"}`}>
               {c.replyTo.preview || "Attachment"}
@@ -255,9 +262,7 @@ function BubbleImpl({
             bare ? "px-1.5 pb-0.5" : ""
           }`}
         >
-          {starred && (
-            <Star size={11} className="fill-current text-warn" aria-label="Starred" />
-          )}
+          {starred && <Star size={11} className="fill-current text-warn" aria-label="Starred" />}
           {m.editedAt && (
             <span className="italic" title={`Edited ${formatTime(m.editedAt)}`}>
               Edited
@@ -294,7 +299,9 @@ function BubbleImpl({
         aria-label="Message options"
         aria-expanded={menu !== null}
         className={`rounded-full p-1.5 text-muted transition hover:bg-s3 hover:text-fg ${
-          menu ? "opacity-100" : "opacity-0 focus:opacity-100 group-hover:opacity-100 max-md:opacity-60"
+          menu
+            ? "opacity-100"
+            : "opacity-0 focus:opacity-100 group-hover:opacity-100 max-md:opacity-60"
         }`}
       >
         <ChevronDown size={16} />
@@ -334,7 +341,11 @@ function BubbleImpl({
           )}
           <div className="rounded-2xl border border-line bg-s1 p-1.5 text-sm shadow-[var(--shadow)]">
             {m.state === "failed" && (
-              <MenuItem icon={RotateCw} onClick={() => void retryMessage(m.convId, m.id)} done={close}>
+              <MenuItem
+                icon={RotateCw}
+                onClick={() => void retryMessage(m.convId, m.id)}
+                done={close}
+              >
                 Retry sending
               </MenuItem>
             )}
@@ -352,20 +363,12 @@ function BubbleImpl({
               </MenuItem>
             )}
             {canForward && (
-              <MenuItem
-                icon={Star}
-                onClick={() => void setStarred(m.id, !starred)}
-                done={close}
-              >
+              <MenuItem icon={Star} onClick={() => void setStarred(m.id, !starred)} done={close}>
                 {starred ? "Unstar" : "Star"}
               </MenuItem>
             )}
             {canForward && (
-              <MenuItem
-                icon={Forward}
-                onClick={() => setForward(true)}
-                done={close}
-              >
+              <MenuItem icon={Forward} onClick={() => setForward(true)} done={close}>
                 Forward
               </MenuItem>
             )}
@@ -380,7 +383,9 @@ function BubbleImpl({
                 icon={Trash2}
                 danger
                 onClick={() =>
-                  void deleteForEveryone(m.convId, m.id).catch(() => toast("Couldn't delete that for everyone"))
+                  void deleteForEveryone(m.convId, m.id).catch(() =>
+                    toast("Couldn't delete that for everyone"),
+                  )
                 }
                 done={close}
               >
@@ -426,4 +431,3 @@ function MenuItem({
 }
 
 export const Bubble = memo(BubbleImpl);
-

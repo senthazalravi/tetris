@@ -42,7 +42,15 @@ import {
 import type { LocalMessage } from "@/state/localdb";
 import { useSession } from "@/state/session";
 import { useTheme, type ThemeChoice } from "@/state/theme";
-import { Avatar, Button, Field, Modal, PasscodeField, SQUIGGLE_PRESETS, squiggleUrl } from "@/ui/kit";
+import {
+  Avatar,
+  Button,
+  Field,
+  Modal,
+  PasscodeField,
+  SQUIGGLE_PRESETS,
+  squiggleUrl,
+} from "@/ui/kit";
 
 /* ------------------------------------------------------------------ */
 /* new chat                                                            */
@@ -51,7 +59,9 @@ import { Avatar, Button, Field, Modal, PasscodeField, SQUIGGLE_PRESETS, squiggle
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="mt-5">
-      <h3 className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">{title}</h3>
+      <h3 className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">
+        {title}
+      </h3>
       <div className="overflow-hidden rounded-2xl border border-line bg-s2">{children}</div>
     </section>
   );
@@ -89,7 +99,13 @@ function Row({
   );
 }
 
-export function ChatPrivacyLearnModal({ onClose }: { onClose: () => void }) {
+export function ChatPrivacyLearnModal({
+  onClose,
+  group = false,
+}: {
+  onClose: () => void;
+  group?: boolean;
+}) {
   return (
     <Modal title="How this chat stays private" onClose={onClose}>
       <div className="space-y-3">
@@ -98,9 +114,9 @@ export function ChatPrivacyLearnModal({ onClose }: { onClose: () => void }) {
           <div className="min-w-0 text-sm leading-relaxed">
             <p className="font-semibold">End-to-end encryption</p>
             <p className="mt-1.5 text-muted">
-              Text, photos, voice notes, and files are encrypted in your browser before they leave your device.
-              Only you and the person you're chatting with can read them—the service stores ciphertext, not the
-              plain content.
+              Text, photos, voice notes, and files are encrypted in your browser before they leave
+              your device. Only you and the person you're chatting with can read them—the service
+              stores ciphertext, not the plain content.
             </p>
           </div>
         </div>
@@ -109,20 +125,55 @@ export function ChatPrivacyLearnModal({ onClose }: { onClose: () => void }) {
           <div className="min-w-0 text-sm leading-relaxed">
             <p className="font-semibold">Messages that vanish</p>
             <p className="mt-1.5 text-muted">
-              Every message and attachment expires about 24 hours after it is sent, based on the server clock—not
-              when it was read. After that, copies on the server are removed. Either of you can still screenshot or
-              save something before it expires.
+              Every message and attachment expires about {group ? "7 days" : "24 hours"} after it is
+              sent, based on the server clock—not when it was read. After that, copies on the server
+              are removed. Either of you can still screenshot or save something before it expires.
             </p>
           </div>
         </div>
         <p className="text-xs leading-relaxed text-faint">
-          Encryption protects message content, not all metadata (for example who you talk to and when). Open contact
-          info from the header to compare your safety number with this person.
+          Encryption protects message content, not all metadata (for example who you talk to and
+          when). Open contact info from the header to compare your safety number with this person.
         </p>
       </div>
       <div className="mt-5 flex justify-end">
         <Button onClick={onClose}>Got it</Button>
       </div>
+    </Modal>
+  );
+}
+
+/** Group details: who is in it, and how the group is protected. */
+export function GroupInfo({ conv, onClose }: { conv: ConversationDto; onClose: () => void }) {
+  const myId = useSession((st) => st.user?.id);
+  const members = conv.group?.members ?? [];
+  return (
+    <Modal title={conv.group?.name ?? "Group"} onClose={onClose}>
+      <p className="flex items-center gap-2 text-xs text-muted">
+        <Timer size={13} /> Group messages and files vanish 7 days after they&apos;re sent.
+      </p>
+      <p className="mt-1 text-xs text-muted">
+        Every message is end-to-end encrypted separately for each member.
+      </p>
+      <Section title={`${members.length} members`}>
+        <ul className="space-y-1">
+          {members.map((u) => (
+            <li key={u.userId} className="flex items-center gap-3 rounded-xl px-1 py-1.5">
+              <Avatar name={u.displayName} seed={u.userId} url={u.avatarUrl} size={36} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium">
+                  {u.displayName}
+                  {u.userId === myId ? " (you)" : ""}
+                </span>
+                <span className="block truncate text-xs text-muted">@{u.username}</span>
+              </span>
+              {!u.deviceId && (
+                <span className="shrink-0 text-[11px] text-faint">hasn&apos;t signed in yet</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      </Section>
     </Modal>
   );
 }
@@ -169,14 +220,11 @@ export function ContactInfo({ conv, onClose }: { conv: ConversationDto; onClose:
   return (
     <Modal title="Contact info" onClose={onClose}>
       <div className="relative -mx-5 -mt-5 mb-1 overflow-hidden px-5 pb-6 pt-8 text-center">
-        <div className="glow-lime pointer-events-none absolute inset-0 opacity-70" />
         <div className="relative flex flex-col items-center">
           <div className="rounded-full p-1 ring-2 ring-pop/60">
             <Avatar name={peer.displayName} seed={peer.userId} url={peer.avatarUrl} size={96} />
           </div>
-          <h3 className="mt-3 font-display text-2xl font-extrabold leading-tight">
-            {nameOf(nicknames, peer)}
-          </h3>
+          <h3 className="mt-3 font-display text-3xl leading-tight">{nameOf(nicknames, peer)}</h3>
           <p className="mt-0.5 flex items-center gap-1 text-muted">
             <AtSign size={14} />
             {peer.username}
@@ -192,7 +240,10 @@ export function ContactInfo({ conv, onClose }: { conv: ConversationDto; onClose:
       <Section title="Nickname">
         <form onSubmit={saveNickname} className="flex items-center gap-2 p-3">
           <div className="relative flex-1">
-            <Pencil size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
+            <Pencil
+              size={15}
+              className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-faint"
+            />
             <input
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
@@ -207,7 +258,8 @@ export function ContactInfo({ conv, onClose }: { conv: ConversationDto; onClose:
           </Button>
         </form>
         <p className="px-4 pb-3 text-xs text-faint">
-          Only you see this. It's stored on this device and shown everywhere instead of their profile name.
+          Only you see this. It's stored on this device and shown everywhere instead of their
+          profile name.
         </p>
       </Section>
 
@@ -226,8 +278,8 @@ export function ContactInfo({ conv, onClose }: { conv: ConversationDto; onClose:
                 ))}
               </div>
               <p className="mt-3 text-xs leading-relaxed text-muted">
-                Compare this with {nameOf(nicknames, peer)} in person or on a call. If it matches on both screens,
-                nobody is sitting in the middle of your chat.
+                Compare this with {nameOf(nicknames, peer)} in person or on a call. If it matches on
+                both screens, nobody is sitting in the middle of your chat.
               </p>
             </>
           ) : (
@@ -254,7 +306,12 @@ export function ContactInfo({ conv, onClose }: { conv: ConversationDto; onClose:
             }}
           />
         ) : (
-          <Row icon={Eraser} label="Clear chat" hint="Delete all messages here, on this device" onClick={() => setConfirm("clear")} />
+          <Row
+            icon={Eraser}
+            label="Clear chat"
+            hint="Delete all messages here, on this device"
+            onClick={() => setConfirm("clear")}
+          />
         )}
         {confirm === "remove" ? (
           <ConfirmRow
@@ -264,7 +321,12 @@ export function ContactInfo({ conv, onClose }: { conv: ConversationDto; onClose:
             onConfirm={remove}
           />
         ) : (
-          <Row icon={UserMinus} label="Remove contact" danger onClick={() => setConfirm("remove")} />
+          <Row
+            icon={UserMinus}
+            label="Remove contact"
+            danger
+            onClick={() => setConfirm("remove")}
+          />
         )}
       </Section>
     </Modal>
@@ -324,7 +386,9 @@ function InfoRow({
 }) {
   return (
     <div className="flex items-center gap-3 border-b border-line px-4 py-3 last:border-b-0">
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-s3">{icon}</span>
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-s3">
+        {icon}
+      </span>
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium">{label}</div>
         <div className={`text-xs ${dim ? "text-faint" : "text-muted"}`}>{value}</div>
@@ -359,13 +423,25 @@ export function MessageInfo({ m, onClose }: { m: LocalMessage; onClose: () => vo
             <InfoRow
               icon={<Send size={15} />}
               label="Sent"
-              value={m.state === "failed" ? "Not sent" : m.state === "sending" ? "Sending…" : formatFull(m.createdAt)}
+              value={
+                m.state === "failed"
+                  ? "Not sent"
+                  : m.state === "sending"
+                    ? "Sending…"
+                    : formatFull(m.createdAt)
+              }
               dim={m.state === "failed" || m.state === "sending"}
             />
             <InfoRow
               icon={<CheckCheck size={16} />}
               label="Delivered"
-              value={m.deliveredAt ? formatFull(m.deliveredAt) : m.state === "delivered" || m.state === "read" ? "Yes" : "Not yet"}
+              value={
+                m.deliveredAt
+                  ? formatFull(m.deliveredAt)
+                  : m.state === "delivered" || m.state === "read"
+                    ? "Yes"
+                    : "Not yet"
+              }
               dim={!m.deliveredAt && m.state !== "delivered" && m.state !== "read"}
             />
             <InfoRow
@@ -385,7 +461,8 @@ export function MessageInfo({ m, onClose }: { m: LocalMessage; onClose: () => vo
         />
       </div>
       <p className="mt-3 text-center text-xs text-faint">
-        Times come from the server clock. Both people's copies disappear 24 hours after sending.
+        Times come from the server clock. Every copy disappears{" "}
+        {m.expiresAt - m.createdAt > 3 * 86_400_000 ? "7 days" : "24 hours"} after sending.
       </p>
     </Modal>
   );
@@ -415,13 +492,11 @@ export function Profile({ onClose }: { onClose: () => void }) {
   const [seed, setSeed] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-
   const [curPass, setCurPass] = useState("");
   const [newPass, setNewPass] = useState("");
   const [confirmPass, setConfirmPass] = useState("");
   const [passBusy, setPassBusy] = useState(false);
   const [passError, setPassError] = useState<string | null>(null);
-
 
   if (!user) return null;
 
@@ -487,14 +562,19 @@ export function Profile({ onClose }: { onClose: () => void }) {
     }
   }
 
-  const modKey = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
+  const modKey =
+    typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
 
   return (
     <Modal title="Your profile" onClose={onClose}>
       <div className="flex flex-col items-center">
         <div className="relative">
           <div className="rounded-full p-1 ring-2 ring-pop/60">
-            <img src={shown} alt="Your avatar" className="h-24 w-24 rounded-full bg-s3 object-cover" />
+            <img
+              src={shown}
+              alt="Your avatar"
+              className="h-24 w-24 rounded-full bg-s3 object-cover"
+            />
           </div>
           <button
             onClick={() => fileRef.current?.click()}
@@ -543,12 +623,22 @@ export function Profile({ onClose }: { onClose: () => void }) {
                 seed === s ? "ring-2 ring-pop ring-offset-2 ring-offset-s2" : ""
               }`}
             >
-              <img src={squiggleUrl(s)} alt="" className="aspect-square w-full bg-s3" draggable={false} />
+              <img
+                src={squiggleUrl(s)}
+                alt=""
+                className="aspect-square w-full bg-s3"
+                draggable={false}
+              />
             </button>
           ))}
         </div>
         <div className="mt-3">
-          <Button size="sm" variant="soft" onClick={() => fileRef.current?.click()} disabled={photoBusy}>
+          <Button
+            size="sm"
+            variant="soft"
+            onClick={() => fileRef.current?.click()}
+            disabled={photoBusy}
+          >
             Upload a photo
           </Button>
         </div>
@@ -562,11 +652,20 @@ export function Profile({ onClose }: { onClose: () => void }) {
           onChange={(e) => setName(e.target.value)}
           className="flex-1"
         />
-        <Button type="submit" busy={saving} disabled={!name.trim() || name.trim() === user.displayName} className="h-12">
+        <Button
+          type="submit"
+          busy={saving}
+          disabled={!name.trim() || name.trim() === user.displayName}
+          className="h-12"
+        >
           Save
         </Button>
       </form>
-      {error && <p role="alert" className="mt-3 rounded-xl bg-danger/10 px-4 py-3 text-sm text-danger">{error}</p>}
+      {error && (
+        <p role="alert" className="mt-3 rounded-xl bg-danger/10 px-4 py-3 text-sm text-danger">
+          {error}
+        </p>
+      )}
 
       <div className="mt-6">
         <div className="mb-2 text-[13px] font-medium text-muted">Appearance</div>
@@ -597,7 +696,13 @@ export function Profile({ onClose }: { onClose: () => void }) {
             {passError}
           </p>
         )}
-        <Button type="submit" busy={passBusy} disabled={!curPass || !newPass || !confirmPass} variant="soft" block>
+        <Button
+          type="submit"
+          busy={passBusy}
+          disabled={!curPass || !newPass || !confirmPass}
+          variant="soft"
+          block
+        >
           Update passcode
         </Button>
       </form>
@@ -608,13 +713,16 @@ export function Profile({ onClose }: { onClose: () => void }) {
         </div>
         <ul className="space-y-1.5 text-sm text-muted">
           <li>
-            <kbd className="rounded bg-s3 px-1.5 py-0.5 text-xs text-fg">{modKey}+K</kbd> Search people
+            <kbd className="rounded bg-s3 px-1.5 py-0.5 text-xs text-fg">{modKey}+K</kbd> Search
+            people
           </li>
           <li>
-            <kbd className="rounded bg-s3 px-1.5 py-0.5 text-xs text-fg">{modKey}+F</kbd> Search in chat
+            <kbd className="rounded bg-s3 px-1.5 py-0.5 text-xs text-fg">{modKey}+F</kbd> Search in
+            chat
           </li>
           <li>
-            <kbd className="rounded bg-s3 px-1.5 py-0.5 text-xs text-fg">Esc</kbd> Close dialogs and chat
+            <kbd className="rounded bg-s3 px-1.5 py-0.5 text-xs text-fg">Esc</kbd> Close dialogs and
+            chat
           </li>
         </ul>
       </div>
@@ -628,9 +736,9 @@ export function Profile({ onClose }: { onClose: () => void }) {
         </Button>
       </div>
       <p className="mt-3 text-center text-xs leading-relaxed text-faint">
-        Locking reloads Tetris, so you'll be asked for your passcode again (one attempt, 30 seconds).
+        Locking reloads Tetris, so you'll be asked for your passcode again (one attempt, 30
+        seconds).
       </p>
     </Modal>
   );
 }
-

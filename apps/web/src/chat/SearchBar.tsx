@@ -1,15 +1,23 @@
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Lock, Search } from "lucide-react";
+import { Loader2, Lock, Search, Users } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
-import { openChatWith, toast } from "@/state/chat";
+import {
+  openChatWith,
+  refreshConversations,
+  selectConversation,
+  toast,
+  useChat,
+} from "@/state/chat";
 import { useSession } from "@/state/session";
 import { Avatar } from "@/ui/kit";
 
 interface Match {
+  /** A user id, or the conversation id when `group` is set. */
   userId: string;
   username: string;
   displayName: string;
   avatarUrl: string | null;
+  group?: boolean;
 }
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -62,9 +70,21 @@ export function SearchBar({ disabled = false }: { disabled?: boolean }) {
     setSearching(true);
     const t = setTimeout(async () => {
       try {
-        const res = await api.get<{ users: Match[] }>(`/users/search?q=${encodeURIComponent(term)}`);
+        const res = await api.get<{
+          users: Match[];
+          groups?: Array<{ conversationId: string; name: string }>;
+        }>(`/users/search?q=${encodeURIComponent(term)}`);
         if (mine !== seq.current) return;
-        setMatches(res.users);
+        setMatches([
+          ...(res.groups ?? []).map((g): Match => ({
+            userId: g.conversationId,
+            username: "",
+            displayName: g.name,
+            avatarUrl: null,
+            group: true,
+          })),
+          ...res.users,
+        ]);
         setActive(0);
       } catch (e) {
         if (mine !== seq.current) return;
@@ -79,7 +99,14 @@ export function SearchBar({ disabled = false }: { disabled?: boolean }) {
 
   async function pick(m: Match) {
     try {
-      await openChatWith(m.userId);
+      if (m.group) {
+        if (!useChat.getState().conversations.some((c) => c.id === m.userId)) {
+          await refreshConversations();
+        }
+        selectConversation(m.userId);
+      } else {
+        await openChatWith(m.userId);
+      }
       setQ("");
       setMatches([]);
       setOpen(false);
@@ -115,10 +142,12 @@ export function SearchBar({ disabled = false }: { disabled?: boolean }) {
       {showList && (
         <ul
           role="listbox"
-          className="pop-in absolute bottom-full left-0 right-0 mb-2 max-h-72 overflow-y-auto rounded-2xl border border-line bg-s1 p-1.5 shadow-[var(--shadow)]"
+          className="panel pop-in absolute bottom-full left-0 right-0 mb-2 max-h-72 overflow-y-auto rounded-2xl p-1.5 shadow-[var(--shadow)]"
         >
           {matches.length === 0 && !searching && (
-            <li className="px-3 py-3 text-sm text-muted">No one matches &ldquo;{q.trim()}&rdquo;.</li>
+            <li className="px-3 py-3 text-sm text-muted">
+              No one matches &ldquo;{q.trim()}&rdquo;.
+            </li>
           )}
           {matches.map((m, i) => (
             <li key={m.userId} role="option" aria-selected={i === active}>
@@ -131,10 +160,18 @@ export function SearchBar({ disabled = false }: { disabled?: boolean }) {
                   i === active ? "bg-s3" : "hover:bg-s2"
                 }`}
               >
-                <Avatar name={m.displayName} seed={m.userId} url={m.avatarUrl} size={36} />
+                {m.group ? (
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-s3 text-muted">
+                    <Users size={17} />
+                  </span>
+                ) : (
+                  <Avatar name={m.displayName} seed={m.userId} url={m.avatarUrl} size={36} />
+                )}
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-semibold">{m.displayName}</span>
-                  <span className="block truncate text-xs text-muted">@{m.username}</span>
+                  <span className="block truncate text-xs text-muted">
+                    {m.group ? "Group" : `@${m.username}`}
+                  </span>
                 </span>
               </button>
             </li>
@@ -143,10 +180,8 @@ export function SearchBar({ disabled = false }: { disabled?: boolean }) {
       )}
 
       <label
-        className={`flex h-12 items-center gap-3 rounded-full border px-4 shadow-[var(--shadow)] transition ${
-          disabled
-            ? "border-line bg-s2/70 text-faint"
-            : "border-line bg-s1 text-fg focus-within:border-pop focus-within:ring-4 focus-within:ring-pop/15"
+        className={`panel flex h-[52px] items-center gap-3 rounded-2xl px-5 transition ${
+          disabled ? "text-faint" : "text-fg focus-within:border-lines"
         }`}
       >
         {disabled ? <Lock size={17} /> : <Search size={17} className="text-muted" />}
