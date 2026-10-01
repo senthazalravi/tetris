@@ -8,6 +8,7 @@ Developed by [Manas Dutta](https://www.manasdutta.com/).
 
 - **End-to-end encryption** for text, replies, reactions, edits, polls, voice notes, and files — sealed in the browser before anything is sent
 - **24-hour expiry** on messages and attachments (server clock), with automatic cleanup
+- **Group chats**: predefined groups (seeded from a gitignored `groups.local.json`) are end-to-end encrypted by sealing each message separately for every member. Group messages and files last 7 days instead of 24 hours, and groups are found with the same search
 - **Username + 8-digit passcode** are the only credentials: no account password. An email is collected at sign-up for notifications only. The passcode is never uploaded
 - **Tetris gate**: after unlocking, you play a round of Tetris; the chats open when the game ends
 - **Wipe on failure**: wrong or timed-out unlock removes communication state locally and on the server

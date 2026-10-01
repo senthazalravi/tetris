@@ -176,6 +176,42 @@ class Client {
     return { id, ...r };
   }
 
+  /** Group fan-out: one pairwise ratchet envelope per member. */
+  async sendGroup(
+    convId: string,
+    members: Array<{ userId: string }>,
+    text: string,
+    attachmentId?: string,
+  ) {
+    const copies: any[] = [];
+    const next: Array<[string, any]> = [];
+    for (const mem of members) {
+      let state = this.sessions.get(mem.userId);
+      if (!state) {
+        const b = await this.req("GET", `/users/${mem.userId}/key-bundle`);
+        assert.equal(b.status, 200, JSON.stringify(b.data));
+        state = initiateSession(this.keys, b.data as PeerBundle, this.deviceId);
+      }
+      const enc = await ratchetEncrypt(state, utf8ToBytes(text));
+      copies.push({
+        recipientUserId: mem.userId,
+        recipientDeviceId: state.peerDeviceId,
+        cryptoHeader: enc.message.cryptoHeader,
+        ciphertext: enc.message.ciphertext,
+      });
+      next.push([mem.userId, enc.state]);
+    }
+    const id = `msg_${crypto.randomUUID().replace(/-/g, "")}`;
+    const r = await this.req("POST", `/conversations/${convId}/group-messages`, {
+      messageId: id,
+      senderDeviceId: this.deviceId,
+      copies,
+      attachmentId,
+    });
+    if (r.status === 201) for (const [uid, st] of next) this.sessions.set(uid, st);
+    return { id, ...r };
+  }
+
   async receive(from: Client) {
     const s = await this.req("GET", "/sync?ts=0&id=");
     assert.equal(s.status, 200, JSON.stringify(s.data));
@@ -474,6 +510,101 @@ async function main() {
   });
   assert.equal(badToken, "http 403");
   ok("websocket upgrades with cookie + vault token, and is refused without a valid token");
+
+  // --- groups -------------------------------------------------------------
+  const g1 = new Client("gina");
+  const g2 = new Client("gus");
+  const g3 = new Client("gwen");
+  const outsider = new Client("oto");
+  for (const g of [g1, g2, g3, outsider]) await g.register();
+  const gname = `Team ${rand()}`;
+  const gfile = join(tmpdir(), `tetris-e2e-group-${rand()}.json`);
+  writeFileSync(
+    gfile,
+    JSON.stringify([{ name: gname, members: [g1.username, g2.username, g3.username] }]),
+  );
+  execSync(`npx tsx scripts/seed-groups.ts "${gfile}"`, { stdio: "pipe" });
+
+  const glist = await g1.req("GET", "/conversations");
+  const gconv = glist.data.conversations.find((c: any) => c.group?.name === gname);
+  assert.ok(gconv, "the group is listed for its members");
+  assert.equal(gconv.group.members.length, 3);
+  assert.ok(
+    !(await outsider.req("GET", "/conversations")).data.conversations.some((c: any) => c.group?.name === gname),
+    "non-members never see the group",
+  );
+  const gsearch = await g2.req("GET", `/users/search?q=${gname.slice(0, 6).toLowerCase()}`);
+  assert.ok(gsearch.data.groups.some((g: any) => g.name === gname), "search finds the group by name");
+  assert.deepEqual((await outsider.req("GET", `/users/search?q=${gname.slice(0, 6).toLowerCase()}`)).data.groups, []);
+  ok("groups: listed for members only, found by search");
+
+  const others = gconv.group.members.filter((u: any) => u.userId !== g1.userId);
+  const gsecret = `group secret ${rand()}`;
+  const gsent = await g1.sendGroup(gconv.id, others, gsecret);
+  assert.equal(gsent.status, 201, JSON.stringify(gsent.data));
+  assert.equal(gsent.data.expiresAt - gsent.data.createdAt, 7 * 86_400_000, "group messages live 7 days");
+  for (const g of [g2, g3]) {
+    const rxg = await g.req("GET", "/sync?ts=0&id=");
+    const row = rxg.data.messages.find((m: any) => m.messageId === gsent.id);
+    assert.ok(row, "every member gets a copy");
+    const dec = await ratchetDecrypt(g.sessions.get(g1.userId) ?? null, g.keys, {
+      cryptoHeader: row.cryptoHeader,
+      ciphertext: row.ciphertext,
+    });
+    g.sessions.set(g1.userId, dec.state);
+    g.keys = dec.keys;
+    assert.equal(utf8Decode(dec.plaintext), gsecret);
+    assert.ok(!JSON.stringify(rxg.data).includes(gsecret), "wire data never contains plaintext");
+  }
+  ok("group send: each member decrypts their own copy; expiry is 7 days");
+
+  const gdump = execSync(
+    `npx wrangler d1 execute tetris-db --local --json --command "SELECT hex(ciphertext) AS c FROM messages"`,
+    { cwd: "workers/api", encoding: "utf8" },
+  );
+  assert.ok(!gdump.includes(Buffer.from(gsecret).toString("hex").toUpperCase()));
+  ok("group ciphertext in D1 holds no plaintext");
+
+  // receipts aggregate to the lowest state across members
+  const rowOf = async (g: Client) =>
+    (await g.req("GET", "/sync?ts=0&id=")).data.messages.find((m: any) => m.messageId === gsent.id);
+  const rowG2 = (await g2.req("GET", "/sync?ts=0&id=")).data.messages.find((m: any) => m.messageId === gsent.id);
+  const rowG3 = (await g3.req("GET", "/sync?ts=0&id=")).data.messages.find((m: any) => m.messageId === gsent.id);
+  await g2.req("POST", "/messages/ack", { ids: [rowG2.id], state: "read" });
+  assert.equal((await rowOf(g1)).state, "accepted", "still waiting on the third member");
+  await g3.req("POST", "/messages/ack", { ids: [rowG3.id], state: "read" });
+  assert.equal((await rowOf(g1)).state, "read", "read once everyone has read it");
+  const own = (await g1.req("GET", "/sync?ts=0&id=")).data.messages.filter((m: any) => m.messageId === gsent.id);
+  assert.equal(own.length, 1, "the sender sees one row per message, not one per member");
+  ok("group receipts aggregate; the sender sees a single message");
+
+  // attachments in a group
+  const gfileBytes = new TextEncoder().encode(`group file ${rand()}`);
+  const gblob = await encryptBlob(gfileBytes);
+  const gup = await g1.req("PUT", `/conversations/${gconv.id}/attachments`, undefined, gblob.ciphertext);
+  assert.equal(gup.status, 201, JSON.stringify(gup.data));
+  const gatt = await g1.sendGroup(gconv.id, others, "see attached", gup.data.attachmentId);
+  assert.equal(gatt.status, 201, JSON.stringify(gatt.data));
+  const gdl = await g3.req("GET", `/attachments/${gup.data.attachmentId}`);
+  assert.equal(gdl.status, 200);
+  assert.deepEqual(await decryptBlob(gdl.data, gblob.key), gfileBytes);
+  assert.equal((await outsider.req("GET", `/attachments/${gup.data.attachmentId}`)).status, 404);
+  assert.equal(
+    (await outsider.req("PUT", `/conversations/${gconv.id}/attachments`, undefined, gblob.ciphertext)).status,
+    403,
+  );
+  const grow = (await g2.req("GET", "/sync?ts=0&id=")).data.messages.find((m: any) => m.messageId === gatt.id);
+  assert.equal(grow.attachmentId, gup.data.attachmentId);
+  ok("group attachments: members download and decrypt, outsiders are refused");
+
+  // outsiders cannot post; delete for everyone removes every copy
+  const bad = await outsider.sendGroup(gconv.id, others, "let me in").catch(() => null);
+  assert.ok(!bad || bad.status === 403 || bad.status === 400);
+  assert.equal((await g1.req("DELETE", `/messages/${gatt.id}`)).status, 200);
+  const gdel = (await g2.req("GET", "/sync?ts=0&id=")).data.messages.find((m: any) => m.messageId === gatt.id);
+  assert.equal(gdel.deleted, true);
+  assert.equal((await g3.req("GET", `/attachments/${gup.data.attachmentId}`)).status, 404);
+  ok("group: outsiders cannot post; delete for everyone removes every copy and the file");
 
   console.log("\nAll e2e checks passed.");
 }
