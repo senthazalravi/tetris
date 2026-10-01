@@ -268,4 +268,57 @@ export class LocalDb {
     await txDone(tx);
     return ids;
   }
+
+  /**
+   * Re-seal every encrypted blob under a new vault key (passcode change).
+   * Plaintext indexes on messages stay as they are.
+   */
+  async rekey(newKey: CryptoKey): Promise<void> {
+    const old = this.key;
+
+    const kvKeys = await wrap<IDBValidKey[]>(
+      this.db.transaction("kv").objectStore("kv").getAllKeys(),
+    );
+    for (const k of kvKeys) {
+      const blob = await wrap<Uint8Array | undefined>(
+        this.db.transaction("kv").objectStore("kv").get(k),
+      );
+      if (!blob) continue;
+      const value = await openJson(old, blob);
+      const next = await sealJson(newKey, value);
+      const tx = this.db.transaction("kv", "readwrite");
+      tx.objectStore("kv").put(next, k);
+      await txDone(tx);
+    }
+
+    for (const store of ["sessions", "peers"] as const) {
+      const keys = await wrap<IDBValidKey[]>(
+        this.db.transaction(store).objectStore(store).getAllKeys(),
+      );
+      for (const k of keys) {
+        const blob = await wrap<Uint8Array | undefined>(
+          this.db.transaction(store).objectStore(store).get(k),
+        );
+        if (!blob) continue;
+        const value = await openJson(old, blob);
+        const next = await sealJson(newKey, value);
+        const tx = this.db.transaction(store, "readwrite");
+        tx.objectStore(store).put(next, k);
+        await txDone(tx);
+      }
+    }
+
+    const rows = await wrap<Row[]>(
+      this.db.transaction("messages").objectStore("messages").getAll(),
+    );
+    for (const row of rows) {
+      const plain = await aeadOpen(old, row.blob);
+      const sealed = await aeadSeal(newKey, plain);
+      const tx = this.db.transaction("messages", "readwrite");
+      tx.objectStore("messages").put({ ...row, blob: sealed });
+      await txDone(tx);
+    }
+
+    this.key = newKey;
+  }
 }

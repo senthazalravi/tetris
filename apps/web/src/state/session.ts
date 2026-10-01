@@ -3,11 +3,12 @@ import {
   deriveAuthProof,
   deriveVaultSecrets,
   generateSaltB64,
+  importAesKey,
 } from "@lop/crypto";
 import type { ChallengeDto, SessionUser } from "@lop/types";
 import { api, ApiError, setAuthLostHandler, setVaultToken } from "@/lib/api";
 import { deleteDatabase, dbNameFor, readStoredEpoch } from "./localdb";
-import { isUnlocked, lockMemory, openVault } from "./vault";
+import { isUnlocked, lockMemory, openVault, vault } from "./vault";
 import { stopEngine } from "./chat";
 
 export type Phase = "boot" | "anon" | "locked" | "vault-setup" | "ready" | "replaced";
@@ -48,6 +49,9 @@ interface SessionState {
     password: string;
     turnstileToken?: string;
   }): Promise<{ message: string }>;
+  changePassword(input: { currentPassword: string; newPassword: string }): Promise<void>;
+  changeVaultPasscode(input: { currentPasscode: string; newPasscode: string }): Promise<void>;
+  deleteAccount(password: string): Promise<void>;
   unlock(passcode: string): Promise<{ ok: boolean }>;
   expire(): Promise<void>;
   setupVault(passcode: string): Promise<void>;
@@ -303,6 +307,51 @@ export const useSession = create<SessionState>((set, get) => ({
       /* cookie expires regardless */
     }
     setVaultToken(null);
+    set({ phase: "anon", user: null, challenge: null, notice: null });
+  },
+
+  async changePassword(input) {
+    const login = get().user?.email;
+    if (!login) throw new Error("Not signed in");
+    const { authSalt } = await api.post<{ authSalt: string }>("/auth/prelogin", { login });
+    const oldAuthProof = await deriveAuthProof(input.currentPassword, authSalt);
+    const newSalt = generateSaltB64();
+    const authProof = await deriveAuthProof(input.newPassword, newSalt);
+    await api.post("/auth/change-password", {
+      oldAuthProof,
+      authSalt: newSalt,
+      authProof,
+    });
+  },
+
+  async changeVaultPasscode(input) {
+    const user = get().user;
+    if (!user || !isUnlocked()) throw new Error("Vault is locked");
+    const { vaultSalt } = await api.get<{ vaultSalt: string }>("/auth/vault-salt");
+    const oldSecrets = await deriveVaultSecrets(input.currentPasscode, vaultSalt);
+    const newSalt = generateSaltB64();
+    const newSecrets = await deriveVaultSecrets(input.newPasscode, newSalt);
+    await api.post("/auth/change-vault", {
+      oldVerifier: oldSecrets.verifier,
+      vaultSalt: newSalt,
+      vaultVerifier: newSecrets.verifier,
+    });
+    const newKey = await importAesKey(newSecrets.vaultKey, false);
+    newSecrets.vaultKey.fill(0);
+    await vault().db.rekey(newKey);
+  },
+
+  async deleteAccount(password) {
+    const login = get().user?.email;
+    const userId = get().user?.id;
+    if (!login || !userId) throw new Error("Not signed in");
+    const { authSalt } = await api.post<{ authSalt: string }>("/auth/prelogin", { login });
+    const authProof = await deriveAuthProof(password, authSalt);
+    stopEngine();
+    await api.post("/auth/delete-account", { authProof });
+    lockMemory();
+    setVaultToken(null);
+    await deleteDatabase(dbNameFor(userId));
     set({ phase: "anon", user: null, challenge: null, notice: null });
   },
 
