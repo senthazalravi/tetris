@@ -78,3 +78,45 @@ export async function runCommunicationWipe(
   await pushToUser(env, userId, { type: "wipe.completed" });
   return { toEpoch };
 }
+
+/**
+ * Permanently delete an account and all server-side data we hold for it.
+ * Call only after the client has confirmed ownership (password proof).
+ */
+export async function deleteAccount(env: Env, userId: string): Promise<void> {
+  await runCommunicationWipe(env, userId, "MANUAL");
+
+  const owned = await env.DB.prepare(
+    `SELECT object_key FROM attachments WHERE owner_user_id = ?`,
+  )
+    .bind(userId)
+    .all<{ object_key: string }>();
+  for (const att of owned.results ?? []) {
+    try {
+      await env.ATTACHMENTS.delete(att.object_key);
+    } catch {
+      /* expiry sweep cleans leftovers */
+    }
+  }
+  try {
+    await env.ATTACHMENTS.delete(`avatars/${userId}`);
+  } catch {
+    /* optional */
+  }
+
+  await env.DB.batch([
+    env.DB.prepare(`DELETE FROM attachments WHERE owner_user_id = ?`).bind(userId),
+    env.DB.prepare(`DELETE FROM messages WHERE sender_user_id = ?`).bind(userId),
+    env.DB.prepare(`DELETE FROM sessions WHERE user_id = ?`).bind(userId),
+    env.DB.prepare(`DELETE FROM unlock_challenges WHERE user_id = ?`).bind(userId),
+    env.DB.prepare(`DELETE FROM unlocks WHERE user_id = ?`).bind(userId),
+    env.DB.prepare(
+      `DELETE FROM prekeys WHERE device_id IN (SELECT id FROM devices WHERE user_id = ?)`,
+    ).bind(userId),
+    env.DB.prepare(`DELETE FROM devices WHERE user_id = ?`).bind(userId),
+    env.DB.prepare(`DELETE FROM contacts WHERE contact_user_id = ?`).bind(userId),
+    env.DB.prepare(`DELETE FROM password_resets WHERE user_id = ?`).bind(userId),
+    env.DB.prepare(`DELETE FROM wipe_operations WHERE user_id = ?`).bind(userId),
+    env.DB.prepare(`DELETE FROM users WHERE id = ?`).bind(userId),
+  ]);
+}

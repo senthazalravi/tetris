@@ -13,6 +13,7 @@ import {
   publicUser,
   readSessionToken,
   requireSession,
+  requireUnlocked,
   setSessionCookie,
   type AppEnv,
 } from "../lib/session";
@@ -30,7 +31,7 @@ import {
 import { clear, hit, peek } from "../lib/ratelimit";
 import { verifyTurnstile } from "../lib/turnstile";
 import { sweepUserChallenges } from "../services/challenges";
-import { runCommunicationWipe } from "../services/wipe";
+import { deleteAccount, runCommunicationWipe } from "../services/wipe";
 
 export const authRoutes = new Hono<AppEnv>();
 
@@ -574,6 +575,99 @@ authRoutes.post("/password-reset", async (c) => {
       ? "Account password updated. Sign in with the new password. Your vault passcode is unchanged."
       : "Account password updated. Sign in, then set up a new vault passcode.",
   });
+});
+
+/* ---------------- change password / vault / delete (unlocked) ------------- */
+
+authRoutes.get("/vault-salt", requireUnlocked, (c) => {
+  const user = c.get("user");
+  if (!user.vault_salt) return c.json({ error: "Vault is not set up" }, 400);
+  return c.json({ vaultSalt: user.vault_salt });
+});
+
+authRoutes.post("/change-password", requireUnlocked, async (c) => {
+  const user = c.get("user");
+  const ip = clientIp(c.req);
+  if (!(await hit(c.env, `chpw:${user.id}`, 10, 60 * 60_000))) {
+    return c.json({ error: "Too many password changes. Try later." }, 429);
+  }
+  const body = await c.req
+    .json<{ oldAuthProof?: string; authSalt?: string; authProof?: string }>()
+    .catch(() => ({}) as Record<string, never>);
+  if (
+    !validB64(body.oldAuthProof, 32) ||
+    !validB64(body.authSalt, 16) ||
+    !validB64(body.authProof, 32)
+  ) {
+    return c.json({ error: "Malformed credentials" }, 400);
+  }
+  if (!safeEqual(await sha256Hex(body.oldAuthProof), user.auth_hash)) {
+    return c.json({ error: "Current password is incorrect" }, 401);
+  }
+  const now = Date.now();
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      `UPDATE users SET auth_salt = ?, auth_hash = ?, updated_at = ? WHERE id = ?`,
+    ).bind(body.authSalt, await sha256Hex(body.authProof), now, user.id),
+    c.env.DB.prepare(
+      `UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL AND id != ?`,
+    ).bind(now, user.id, c.get("session").id),
+  ]);
+  return c.json({ ok: true });
+});
+
+authRoutes.post("/change-vault", requireUnlocked, async (c) => {
+  const user = c.get("user");
+  if (!user.vault_salt || !user.vault_verifier_hash) {
+    return c.json({ error: "Vault is not set up" }, 400);
+  }
+  const ip = clientIp(c.req);
+  if (!(await hit(c.env, `chvault:${user.id}`, 8, 60 * 60_000))) {
+    return c.json({ error: "Too many vault changes. Try later." }, 429);
+  }
+  const body = await c.req
+    .json<{
+      oldVerifier?: string;
+      vaultSalt?: string;
+      vaultVerifier?: string;
+    }>()
+    .catch(() => ({}) as Record<string, never>);
+  if (
+    !validB64(body.oldVerifier, 32) ||
+    !validB64(body.vaultSalt, 16) ||
+    !validB64(body.vaultVerifier, 32)
+  ) {
+    return c.json({ error: "Malformed credentials" }, 400);
+  }
+  if (!safeEqual(await sha256Hex(body.oldVerifier), user.vault_verifier_hash)) {
+    return c.json({ error: "Current vault passcode is incorrect" }, 401);
+  }
+  await c.env.DB.prepare(
+    `UPDATE users SET vault_salt = ?, vault_verifier_hash = ?, updated_at = ? WHERE id = ?`,
+  )
+    .bind(body.vaultSalt, await sha256Hex(body.vaultVerifier), Date.now(), user.id)
+    .run();
+  return c.json({ ok: true });
+});
+
+authRoutes.post("/delete-account", requireUnlocked, async (c) => {
+  const user = c.get("user");
+  const ip = clientIp(c.req);
+  if (!(await hit(c.env, `delacc:${ip}`, 5, 60 * 60_000))) {
+    return c.json({ error: "Too many attempts. Try later." }, 429);
+  }
+  const body = await c.req
+    .json<{ authProof?: string }>()
+    .catch(() => ({}) as Record<string, never>);
+  if (!validB64(body.authProof, 32)) {
+    return c.json({ error: "Confirm with your account password" }, 400);
+  }
+  if (!safeEqual(await sha256Hex(body.authProof), user.auth_hash)) {
+    return c.json({ error: "Password is incorrect" }, 401);
+  }
+  await deleteAccount(c.env, user.id);
+  clearSessionCookie(c);
+  return c.json({ ok: true });
 });
 
 /* ------------------------------- logout -------------------------------- */
