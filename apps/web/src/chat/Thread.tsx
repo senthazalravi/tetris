@@ -4,7 +4,6 @@ import {
   ArrowLeft,
   ChevronDown,
   ChevronUp,
-  Download,
   Images,
   Info,
   Search,
@@ -12,10 +11,9 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import type { ConversationDto } from "@lop/types";
+import type { ConversationDto } from "@tetris/types";
 import { formatDay } from "@/lib/format";
 import {
-  exportChatText,
   messageSearchText,
   nameOf,
   selectConversation,
@@ -81,8 +79,8 @@ export function Thread({ conv }: { conv: ConversationDto }) {
       setSearchOpen(true);
       requestAnimationFrame(() => searchInput.current?.focus());
     };
-    window.addEventListener("lop:chat-search", onSearch);
-    return () => window.removeEventListener("lop:chat-search", onSearch);
+    window.addEventListener("tetris:chat-search", onSearch);
+    return () => window.removeEventListener("tetris:chat-search", onSearch);
   }, []);
 
   useEffect(() => {
@@ -133,18 +131,6 @@ export function Thread({ conv }: { conv: ConversationDto }) {
     if (f) setFile(f);
   }
 
-  function exportChat() {
-    const text = exportChatText(conv.id, peerName, nicknames);
-    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `lop-${conv.peer.username || "chat"}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast("Chat exported");
-  }
-
   const items: React.ReactNode[] = [];
   let lastDay = "";
   let prev: LocalMessage | undefined;
@@ -190,8 +176,15 @@ export function Thread({ conv }: { conv: ConversationDto }) {
       onDrop={onDrop}
     >
       <header className="flex items-center gap-1 border-b border-line bg-s1 px-2 py-2.5 sm:gap-2 sm:px-4">
-        <IconButton label="Back to chats" onClick={() => selectConversation(null)} className="md:hidden">
-          <ArrowLeft size={20} />
+        <IconButton
+          label="Close chat (Esc)"
+          onClick={() => {
+            selectConversation(null);
+            useSession.getState().setScreen("game");
+          }}
+        >
+          <ArrowLeft size={20} className="md:hidden" />
+          <X size={20} className="hidden md:block" />
         </IconButton>
         <button onClick={() => setInfo(true)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
           <Avatar name={conv.peer.displayName} seed={conv.peer.userId} url={conv.peer.avatarUrl} size={42} />
@@ -217,9 +210,6 @@ export function Thread({ conv }: { conv: ConversationDto }) {
         </IconButton>
         <IconButton label="Media & files" onClick={() => setGallery(true)}>
           <Images size={20} />
-        </IconButton>
-        <IconButton label="Export chat" onClick={exportChat}>
-          <Download size={20} />
         </IconButton>
         <IconButton label="Contact info" onClick={() => setInfo(true)}>
           <Info size={20} />

@@ -1,38 +1,43 @@
 import { useEffect, useState } from "react";
-import { Lock } from "lucide-react";
-import { markRead, startEngine, stopEngine, useChat } from "@/state/chat";
-import { LoopMark } from "@/ui/kit";
-import { NewChat, Profile } from "./Modals";
-import { Sidebar } from "./Sidebar";
+import { markRead, selectConversation, startEngine, stopEngine, useChat } from "@/state/chat";
+import { useSession } from "@/state/session";
+import { Game } from "@/screens/Game";
+import { Avatar } from "@/ui/kit";
+import { ThemeButton } from "@/ui/ThemeButton";
+import { Profile } from "./Modals";
+import { SearchBar } from "./SearchBar";
 import { Thread } from "./Thread";
 
-const BASE_TITLE = "Lop";
-
+/**
+ * The unlocked app. The Tetris game fills the screen (profile on top, search
+ * at the bottom). Picking someone slides the game into a 35% column on the
+ * left and opens the chat in the other 65%. On phones the chat opens over it.
+ * There is no inbox, no conversation list and no unread counters.
+ */
 export function ChatApp() {
-  const { conversations, activeId, messages, toast } = useChat();
-  const [modal, setModal] = useState<"new" | "profile" | null>(null);
+  const screen = useSession((s) => s.screen);
+  const setScreen = useSession((s) => s.setScreen);
+  const gameDone = useSession((s) => s.gameDone);
+  const user = useSession((s) => s.user);
+  const toast = useChat((s) => s.toast);
+  const conversations = useChat((s) => s.conversations);
+  const activeId = useChat((s) => s.activeId);
+  const [profile, setProfile] = useState(false);
 
+  const active = conversations.find((c) => c.id === activeId) ?? null;
+  const chatOpen = screen === "chat" && active !== null;
+
+  // Keep syncing and decrypting even while only the game is on screen.
   useEffect(() => {
     void startEngine();
     return () => stopEngine();
   }, []);
 
-  const unread = Object.values(messages).reduce(
-    (n, list) => n + list.filter((m) => m.unread).length,
-    0,
-  );
-  useEffect(() => {
-    document.title = unread ? `(${unread}) ${BASE_TITLE}` : BASE_TITLE;
-    return () => {
-      document.title = BASE_TITLE;
-    };
-  }, [unread]);
-
   // Reading resumes when the tab becomes visible again.
   useEffect(() => {
     const onVisible = () => {
       const id = useChat.getState().activeId;
-      if (document.visibilityState === "visible" && id) {
+      if (document.visibilityState === "visible" && id && useSession.getState().screen === "chat") {
         void markRead(id);
       }
     };
@@ -44,74 +49,85 @@ export function ChatApp() {
     };
   }, []);
 
-  // Global shortcuts when ready (ctrl/cmd combos work even while typing).
+  // Shortcuts: Cmd/Ctrl+F searches inside the open chat; Esc closes the chat
+  // when you are not typing. (Cmd/Ctrl+K opens people search, in SearchBar.)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
-      if (!mod) return;
-      const key = e.key.toLowerCase();
-      if (key === "k") {
-        e.preventDefault();
-        const el = document.querySelector<HTMLInputElement>("[data-sidebar-search]");
-        el?.focus();
-        el?.select();
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "f") {
+        if (useSession.getState().screen === "chat" && useChat.getState().activeId) {
+          e.preventDefault();
+          window.dispatchEvent(new Event("tetris:chat-search"));
+        }
         return;
       }
-      if (key === "f") {
-        e.preventDefault();
-        window.dispatchEvent(new Event("lop:chat-search"));
-        return;
-      }
-      if (key === "n") {
-        e.preventDefault();
-        setModal("new");
-      }
+      if (e.key !== "Escape" || useSession.getState().screen !== "chat") return;
+      if (document.querySelector("[role=dialog]")) return;
+      const el = document.activeElement;
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return;
+      selectConversation(null);
+      setScreen("game");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  const active = conversations.find((c) => c.id === activeId) ?? null;
+  }, [setScreen]);
 
   return (
     <div className="flex h-full bg-bg">
-      <div className={`${active ? "hidden md:flex" : "flex"} h-full w-full md:w-auto`}>
-        <Sidebar onNew={() => setModal("new")} onProfile={() => setModal("profile")} />
-      </div>
+      {/* The game. Centered on its own; slides to a 30% left column when a chat opens. */}
+      <section
+        className={`${
+          chatOpen
+            ? "hidden md:flex md:w-[35%] md:min-w-[340px] md:shrink-0 md:border-r"
+            : "flex flex-1"
+        } relative h-full min-w-0 flex-col border-line`}
+      >
+        <div className="glow-lime pointer-events-none absolute inset-0" />
 
-      <div className={`${active ? "flex" : "hidden md:flex"} h-full min-w-0 flex-1`}>
-        {active ? <Thread key={active.id} conv={active} /> : <EmptyThread />}
-      </div>
+        <header className="relative flex items-center gap-2 px-4 pb-1 pt-3">
+          {user && (
+            <button
+              onClick={() => setProfile(true)}
+              aria-label="Your profile"
+              className="group flex min-w-0 items-center gap-3 rounded-2xl p-1.5 text-left transition hover:bg-s2"
+            >
+              <Avatar name={user.displayName} seed={user.id} url={user.avatarUrl} size={40} />
+              <span className="min-w-0">
+                <span className="block truncate font-display text-[15px] font-bold leading-tight">
+                  {user.displayName}
+                </span>
+                <span className="block truncate text-xs text-muted">@{user.username}</span>
+              </span>
+            </button>
+          )}
+          <span className="flex-1" />
+          <ThemeButton />
+        </header>
+        <div className="relative mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col">
+          <div className="min-h-0 flex-1 pt-2">
+            <Game />
+          </div>
+          <div className="px-4 pb-4 pt-2">
+            <SearchBar disabled={!gameDone} />
+          </div>
+        </div>
+      </section>
 
-      {modal === "new" && <NewChat onClose={() => setModal(null)} />}
-      {modal === "profile" && <Profile onClose={() => setModal(null)} />}
+      {/* The chat appears only once someone is picked. Full screen over the game on phones. */}
+      {chatOpen && active && (
+        <main className="fixed inset-0 z-40 flex min-w-0 flex-col bg-bg md:static md:z-auto md:flex-1">
+          <Thread key={active.id} conv={active} />
+        </main>
+      )}
 
+      {profile && <Profile onClose={() => setProfile(false)} />}
       {toast && (
         <div
           role="status"
-          className="pop-in fixed bottom-6 left-1/2 z-[70] max-w-[90vw] -translate-x-1/2 rounded-full border border-line bg-s4 px-5 py-3 text-sm shadow-[var(--shadow)]"
+          className="pop-in fixed bottom-24 left-1/2 z-[70] max-w-[90vw] -translate-x-1/2 rounded-full border border-line bg-s4 px-5 py-3 text-sm shadow-[var(--shadow)]"
         >
           {toast}
         </div>
       )}
-    </div>
-  );
-}
-
-function EmptyThread() {
-  return (
-    <div className="dotgrid relative flex h-full flex-1 flex-col items-center justify-center bg-bg px-8 text-center">
-      <div className="glow-lime pointer-events-none absolute inset-0" />
-      <div className="relative">
-        <LoopMark size={64} className="mx-auto text-fg" />
-        <h2 className="mt-5 font-display text-3xl font-extrabold tracking-tight">Pick a chat</h2>
-        <p className="mx-auto mt-2 max-w-sm text-muted">
-          Or start a new one. Messages are sealed on your device and gone in 24 hours.
-        </p>
-        <p className="mt-8 inline-flex items-center gap-2 text-xs text-faint">
-          <Lock size={12} /> End-to-end encrypted
-        </p>
-      </div>
     </div>
   );
 }

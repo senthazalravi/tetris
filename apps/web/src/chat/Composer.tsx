@@ -25,7 +25,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import type { ConversationDto } from "@lop/types";
+import type { ConversationDto } from "@tetris/types";
 import { formatBytes } from "@/lib/format";
 import { attachmentProblem, mediaKind, mimeOf } from "@/lib/media";
 import {
@@ -248,14 +248,6 @@ export function Composer({
     if (id === "document" || id === "media" || id === "audio") inputs[id].current?.click();
     else if (id === "camera") setCamera(true);
     else if (id === "poll") setPoll(true);
-  }
-
-  if (conv.blocked) {
-    return (
-      <div className="border-t border-line bg-s1 px-4 py-4 text-center text-sm text-muted">
-        You blocked this contact. Unblock them from the contact info panel to send messages.
-      </div>
-    );
   }
 
   const replyText =

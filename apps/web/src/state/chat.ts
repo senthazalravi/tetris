@@ -10,7 +10,7 @@ import {
   fromBase64,
   type PeerBundle,
   type RatchetState,
-} from "@lop/crypto";
+} from "@tetris/crypto";
 import {
   EDIT_BODY_MAX,
   POLL_MAX_OPTIONS,
@@ -21,14 +21,14 @@ import {
   type AttachmentRef,
   type MessageEnvelope,
   type ReplyRef,
-} from "@lop/protocol";
-import { EDIT_WINDOW_MS, MESSAGE_TTL_MS } from "@lop/config";
+} from "@tetris/protocol";
+import { EDIT_WINDOW_MS, MESSAGE_TTL_MS } from "@tetris/config";
 import type {
   ContactDto,
   ConversationDto,
   RealtimeEvent,
   SyncMessage,
-} from "@lop/types";
+} from "@tetris/types";
 import { api, ApiError, getVaultToken } from "@/lib/api";
 import { newMessageId } from "@/lib/format";
 import { imageMeta, mediaKind, mimeOf } from "@/lib/media";
@@ -406,11 +406,6 @@ export function selectConversation(id: string | null) {
   if (id) void markRead(id);
 }
 
-export async function setBlocked(peerUserId: string, blocked: boolean) {
-  await api.post(`/contacts/${peerUserId}/block`, { blocked });
-  await Promise.all([refreshConversations(), refreshContacts()]);
-}
-
 export async function removeContact(peerUserId: string) {
   await api.del(`/contacts/${peerUserId}`);
   await refreshContacts();
@@ -704,10 +699,6 @@ export async function sendMessage(convId: string, input: SendInput): Promise<voi
   if (!text && !input.file) return;
   const conv = convFor(convId);
   if (!conv) return;
-  if (conv.blocked) {
-    toast("Unblock this contact to send messages.");
-    return;
-  }
 
   const id = newMessageId();
   const now = Date.now();
@@ -927,10 +918,6 @@ export async function sendReaction(convId: string, targetId: string, emoji: stri
   const conv = convFor(convId);
   const target = localMessage(convId, targetId);
   if (!conv || !target || target.deleted) return;
-  if (conv.blocked) {
-    toast("Unblock this contact to react.");
-    return;
-  }
   const next = target.reactions?.[me()] === emoji ? null : emoji;
   const now = Date.now();
   await applyReaction(convId, targetId, me(), next);
@@ -998,10 +985,6 @@ export async function sendEdit(convId: string, targetId: string, text: string) {
   const body = text.trim();
   setEditing(convId, null);
   if (!conv || !target) return;
-  if (conv.blocked) {
-    toast("Unblock this contact to edit messages.");
-    return;
-  }
   if (!canEditMessage(target)) {
     toast("You can only edit a message for 10 minutes after sending it.");
     return;
@@ -1056,10 +1039,6 @@ export interface PollInput {
 export async function sendPoll(convId: string, input: PollInput) {
   const conv = convFor(convId);
   if (!conv) return;
-  if (conv.blocked) {
-    toast("Unblock this contact to send messages.");
-    return;
-  }
   const question = input.question.trim().slice(0, POLL_QUESTION_MAX);
   const options = input.options.map((o) => o.trim().slice(0, POLL_OPTION_MAX)).filter(Boolean);
   if (!question || options.length < 2 || options.length > POLL_MAX_OPTIONS) return;
@@ -1089,10 +1068,6 @@ export async function sendVote(convId: string, targetId: string, choices: number
   const conv = convFor(convId);
   const target = localMessage(convId, targetId);
   if (!conv || !target || target.deleted || target.content.kind !== "poll") return;
-  if (conv.blocked) {
-    toast("Unblock this contact to vote.");
-    return;
-  }
   const now = Date.now();
   await applyVote(convId, targetId, me(), choices);
   const mine = localMessage(convId, targetId)?.votes?.[me()] ?? [];
@@ -1215,7 +1190,7 @@ export function exportChatText(
   const list = get().messages[convId] ?? [];
   const myId = me();
   const lines = [
-    `Lop chat export — ${peerLabel}`,
+    `Tetris chat export — ${peerLabel}`,
     `Exported ${new Date().toISOString()}`,
     "",
   ];

@@ -23,8 +23,8 @@ import {
   UserMinus,
   Send,
 } from "lucide-react";
-import { DISPLAY_NAME_MAX, PASSCODE_MIN_LENGTH, PASSWORD_MIN_LENGTH } from "@lop/config";
-import type { ConversationDto } from "@lop/types";
+import { DISPLAY_NAME_MAX, PASSCODE_PATTERN } from "@tetris/config";
+import type { ConversationDto } from "@tetris/types";
 import { api, ApiError } from "@/lib/api";
 import { formatFull, formatRemaining } from "@/lib/format";
 import { makeAvatar, svgToPng } from "@/lib/media";
@@ -35,7 +35,6 @@ import {
   openChatWith,
   removeContact,
   selectConversation,
-  setBlocked,
   setNickname,
   toast,
   useChat,
@@ -43,123 +42,10 @@ import {
 import type { LocalMessage } from "@/state/localdb";
 import { useSession } from "@/state/session";
 import { useTheme, type ThemeChoice } from "@/state/theme";
-import { Avatar, Button, Field, Modal, SQUIGGLE_PRESETS, squiggleUrl } from "@/ui/kit";
+import { Avatar, Button, Field, Modal, PasscodeField, SQUIGGLE_PRESETS, squiggleUrl } from "@/ui/kit";
 
 /* ------------------------------------------------------------------ */
 /* new chat                                                            */
-/* ------------------------------------------------------------------ */
-
-interface Found {
-  userId: string;
-  username: string;
-  displayName: string;
-  avatarUrl: string | null;
-  isSelf: boolean;
-}
-
-export function NewChat({ onClose }: { onClose: () => void }) {
-  const contacts = useChat((s) => s.contacts);
-  const nicknames = useChat((s) => s.nicknames);
-  const [q, setQ] = useState("");
-  const [found, setFound] = useState<Found | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function open(userId: string) {
-    setBusy(true);
-    try {
-      await openChatWith(userId);
-      onClose();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't start that chat");
-      setBusy(false);
-    }
-  }
-
-  async function lookup(e: FormEvent) {
-    e.preventDefault();
-    const username = q.trim().replace(/^@/, "");
-    if (!username) return;
-    setBusy(true);
-    setError(null);
-    setFound(null);
-    try {
-      setFound(await api.get<Found>(`/users/lookup?username=${encodeURIComponent(username)}`));
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Lookup failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Modal title="New chat" onClose={onClose}>
-      <form onSubmit={lookup} className="flex items-end gap-2">
-        <Field
-          label="Their exact @username"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="@friend"
-          autoCapitalize="none"
-          spellCheck={false}
-          autoFocus
-          className="flex-1"
-        />
-        <Button type="submit" busy={busy} className="h-12" aria-label="Find">
-          <Search size={17} /> Find
-        </Button>
-      </form>
-      <p className="mt-2 text-xs text-faint">
-        There is no directory and no search. People are only found by their full username.
-      </p>
-
-      {error && <p role="alert" className="mt-3 rounded-xl bg-danger/10 px-4 py-3 text-sm text-danger">{error}</p>}
-
-      {found && (
-        <div className="pop-in mt-4 flex items-center gap-3 rounded-2xl border border-lines bg-s2 p-3">
-          <Avatar name={found.displayName} seed={found.userId} url={found.avatarUrl} size={46} />
-          <div className="min-w-0 flex-1">
-            <div className="truncate font-semibold">{found.displayName}</div>
-            <div className="text-sm text-muted">@{found.username}</div>
-          </div>
-          {found.isSelf ? (
-            <span className="text-xs text-muted">That's you</span>
-          ) : (
-            <Button size="sm" onClick={() => void open(found.userId)} busy={busy}>
-              Message
-            </Button>
-          )}
-        </div>
-      )}
-
-      {contacts.length > 0 && (
-        <div className="mt-6">
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-faint">Your contacts</h3>
-          <ul className="-mx-2">
-            {contacts.map((c) => (
-              <li key={c.userId}>
-                <button
-                  onClick={() => void open(c.userId)}
-                  className="flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left transition hover:bg-s2"
-                >
-                  <Avatar name={c.displayName} seed={c.userId} url={c.avatarUrl} size={38} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">{nameOf(nicknames, c)}</span>
-                    <span className="block truncate text-xs text-muted">@{c.username}</span>
-                  </span>
-                  {c.blocked && <Ban size={14} className="text-danger" />}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </Modal>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* contact info                                                        */
 /* ------------------------------------------------------------------ */
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -268,18 +154,6 @@ export function ContactInfo({ conv, onClose }: { conv: ConversationDto; onClose:
     toast(draft.trim() ? "Nickname saved" : "Nickname removed");
   }
 
-  async function block() {
-    setBusy(true);
-    try {
-      await setBlocked(peer.userId, !conv.blocked);
-      toast(conv.blocked ? `Unblocked ${nameOf(nicknames, peer)}` : `Blocked ${nameOf(nicknames, peer)}`);
-    } catch {
-      toast("That didn't work. Try again.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function remove() {
     setBusy(true);
     try {
@@ -311,11 +185,6 @@ export function ContactInfo({ conv, onClose }: { conv: ConversationDto; onClose:
             <p className="mt-1 text-xs text-faint">
               Profile name: <span className="text-muted">{peer.displayName}</span>
             </p>
-          )}
-          {conv.blocked && (
-            <span className="mt-2 rounded-full bg-danger/15 px-3 py-1 text-xs font-medium text-danger">
-              Blocked
-            </span>
           )}
         </div>
       </div>
@@ -387,16 +256,9 @@ export function ContactInfo({ conv, onClose }: { conv: ConversationDto; onClose:
         ) : (
           <Row icon={Eraser} label="Clear chat" hint="Delete all messages here, on this device" onClick={() => setConfirm("clear")} />
         )}
-        <Row
-          icon={Ban}
-          label={conv.blocked ? "Unblock" : "Block"}
-          hint={conv.blocked ? "Start receiving their messages again" : "They won't be able to reach you"}
-          onClick={() => void block()}
-          busy={busy}
-        />
         {confirm === "remove" ? (
           <ConfirmRow
-            text="Remove this contact? You'll stop seeing this chat. They can still message you unless blocked."
+            text="Remove this contact? You'll stop seeing this chat. They can still message you."
             action="Remove"
             onCancel={() => setConfirm(null)}
             onConfirm={remove}
@@ -544,7 +406,7 @@ function randomSeed() {
 }
 
 export function Profile({ onClose }: { onClose: () => void }) {
-  const { user, updateUser, logout, changePassword, changeVaultPasscode, deleteAccount } = useSession();
+  const { user, updateUser, logout, changeVaultPasscode } = useSession();
   const { choice, setChoice } = useTheme();
   const [name, setName] = useState(user?.displayName ?? "");
   const [saving, setSaving] = useState(false);
@@ -553,11 +415,6 @@ export function Profile({ onClose }: { onClose: () => void }) {
   const [seed, setSeed] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const [curPw, setCurPw] = useState("");
-  const [newPw, setNewPw] = useState("");
-  const [confirmPw, setConfirmPw] = useState("");
-  const [pwBusy, setPwBusy] = useState(false);
-  const [pwError, setPwError] = useState<string | null>(null);
 
   const [curPass, setCurPass] = useState("");
   const [newPass, setNewPass] = useState("");
@@ -565,9 +422,6 @@ export function Profile({ onClose }: { onClose: () => void }) {
   const [passBusy, setPassBusy] = useState(false);
   const [passError, setPassError] = useState<string | null>(null);
 
-  const [delPw, setDelPw] = useState("");
-  const [delBusy, setDelBusy] = useState(false);
-  const [delError, setDelError] = useState<string | null>(null);
 
   if (!user) return null;
 
@@ -612,32 +466,11 @@ export function Profile({ onClose }: { onClose: () => void }) {
     void upload(svgToPng(squiggleUrl(next)), next);
   }
 
-  async function onChangePassword(e: FormEvent) {
-    e.preventDefault();
-    setPwError(null);
-    if (newPw.length < PASSWORD_MIN_LENGTH) {
-      return setPwError(`Use at least ${PASSWORD_MIN_LENGTH} characters.`);
-    }
-    if (newPw !== confirmPw) return setPwError("New passwords don't match.");
-    setPwBusy(true);
-    try {
-      await changePassword({ currentPassword: curPw, newPassword: newPw });
-      setCurPw("");
-      setNewPw("");
-      setConfirmPw("");
-      toast("Password updated");
-    } catch (err) {
-      setPwError(err instanceof Error ? err.message : "Couldn't change password");
-    } finally {
-      setPwBusy(false);
-    }
-  }
-
   async function onChangePasscode(e: FormEvent) {
     e.preventDefault();
     setPassError(null);
-    if (newPass.length < PASSCODE_MIN_LENGTH) {
-      return setPassError(`Use at least ${PASSCODE_MIN_LENGTH} characters.`);
+    if (!PASSCODE_PATTERN.test(curPass) || !PASSCODE_PATTERN.test(newPass)) {
+      return setPassError("Passcodes are exactly 8 digits.");
     }
     if (newPass !== confirmPass) return setPassError("New passcodes don't match.");
     setPassBusy(true);
@@ -646,25 +479,11 @@ export function Profile({ onClose }: { onClose: () => void }) {
       setCurPass("");
       setNewPass("");
       setConfirmPass("");
-      toast("Vault passcode updated");
+      toast("Passcode updated");
     } catch (err) {
       setPassError(err instanceof Error ? err.message : "Couldn't change passcode");
     } finally {
       setPassBusy(false);
-    }
-  }
-
-  async function onDeleteAccount(e: FormEvent) {
-    e.preventDefault();
-    setDelError(null);
-    if (!delPw) return setDelError("Enter your account password to confirm.");
-    setDelBusy(true);
-    try {
-      await deleteAccount(delPw);
-      onClose();
-    } catch (err) {
-      setDelError(err instanceof Error ? err.message : "Couldn't delete account");
-      setDelBusy(false);
     }
   }
 
@@ -698,7 +517,6 @@ export function Profile({ onClose }: { onClose: () => void }) {
           />
         </div>
         <p className="mt-3 text-muted">@{user.username}</p>
-        <p className="text-xs text-faint">{user.email}</p>
       </div>
 
       <div className="mt-5 rounded-2xl border border-line bg-s2 p-3">
@@ -767,66 +585,13 @@ export function Profile({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
-      <form onSubmit={onChangePassword} className="mt-6 space-y-3">
-        <div className="flex items-center gap-2 text-[13px] font-medium text-muted">
-          <KeyRound size={15} /> Change account password
-        </div>
-        <Field
-          label="Current password"
-          type="password"
-          autoComplete="current-password"
-          value={curPw}
-          onChange={(e) => setCurPw(e.target.value)}
-        />
-        <Field
-          label="New password"
-          type="password"
-          autoComplete="new-password"
-          value={newPw}
-          onChange={(e) => setNewPw(e.target.value)}
-          minLength={PASSWORD_MIN_LENGTH}
-          hint={`At least ${PASSWORD_MIN_LENGTH} characters`}
-        />
-        <Field
-          label="Confirm new password"
-          type="password"
-          autoComplete="new-password"
-          value={confirmPw}
-          onChange={(e) => setConfirmPw(e.target.value)}
-        />
-        {pwError && <p role="alert" className="rounded-xl bg-danger/10 px-4 py-3 text-sm text-danger">{pwError}</p>}
-        <Button type="submit" busy={pwBusy} disabled={!curPw || !newPw || !confirmPw} variant="soft" block>
-          Update password
-        </Button>
-      </form>
-
       <form onSubmit={onChangePasscode} className="mt-6 space-y-3">
         <div className="flex items-center gap-2 text-[13px] font-medium text-muted">
-          <Lock size={15} /> Change vault passcode
+          <Lock size={15} /> Change passcode
         </div>
-        <Field
-          label="Current passcode"
-          type="password"
-          autoComplete="current-password"
-          value={curPass}
-          onChange={(e) => setCurPass(e.target.value)}
-        />
-        <Field
-          label="New passcode"
-          type="password"
-          autoComplete="new-password"
-          value={newPass}
-          onChange={(e) => setNewPass(e.target.value)}
-          minLength={PASSCODE_MIN_LENGTH}
-          hint={`At least ${PASSCODE_MIN_LENGTH} characters`}
-        />
-        <Field
-          label="Confirm new passcode"
-          type="password"
-          autoComplete="new-password"
-          value={confirmPass}
-          onChange={(e) => setConfirmPass(e.target.value)}
-        />
+        <PasscodeField label="Current passcode" value={curPass} onValue={setCurPass} />
+        <PasscodeField label="New passcode" value={newPass} onValue={setNewPass} />
+        <PasscodeField label="Confirm new passcode" value={confirmPass} onValue={setConfirmPass} />
         {passError && (
           <p role="alert" className="rounded-xl bg-danger/10 px-4 py-3 text-sm text-danger">
             {passError}
@@ -837,46 +602,19 @@ export function Profile({ onClose }: { onClose: () => void }) {
         </Button>
       </form>
 
-      <form onSubmit={onDeleteAccount} className="mt-6 space-y-3">
-        <div className="flex items-center gap-2 text-[13px] font-medium text-danger">
-          <Trash2 size={15} /> Delete account
-        </div>
-        <p className="text-xs leading-relaxed text-muted">
-          Permanently deletes your account and local vault data on this device. This cannot be undone.
-        </p>
-        <Field
-          label="Type your password to confirm"
-          type="password"
-          autoComplete="current-password"
-          value={delPw}
-          onChange={(e) => setDelPw(e.target.value)}
-        />
-        {delError && (
-          <p role="alert" className="rounded-xl bg-danger/10 px-4 py-3 text-sm text-danger">
-            {delError}
-          </p>
-        )}
-        <Button type="submit" busy={delBusy} disabled={!delPw} variant="danger" block>
-          Delete my account
-        </Button>
-      </form>
-
       <div className="mt-6 rounded-2xl border border-line bg-s2 p-4">
         <div className="mb-2 flex items-center gap-2 text-[13px] font-medium text-muted">
           <Keyboard size={15} /> Keyboard shortcuts
         </div>
         <ul className="space-y-1.5 text-sm text-muted">
           <li>
-            <kbd className="rounded bg-s3 px-1.5 py-0.5 text-xs text-fg">{modKey}+K</kbd> Sidebar search
+            <kbd className="rounded bg-s3 px-1.5 py-0.5 text-xs text-fg">{modKey}+K</kbd> Search people
           </li>
           <li>
             <kbd className="rounded bg-s3 px-1.5 py-0.5 text-xs text-fg">{modKey}+F</kbd> Search in chat
           </li>
           <li>
-            <kbd className="rounded bg-s3 px-1.5 py-0.5 text-xs text-fg">{modKey}+N</kbd> New chat
-          </li>
-          <li>
-            <kbd className="rounded bg-s3 px-1.5 py-0.5 text-xs text-fg">Esc</kbd> Close dialogs
+            <kbd className="rounded bg-s3 px-1.5 py-0.5 text-xs text-fg">Esc</kbd> Close dialogs and chat
           </li>
         </ul>
       </div>
@@ -890,7 +628,7 @@ export function Profile({ onClose }: { onClose: () => void }) {
         </Button>
       </div>
       <p className="mt-3 text-center text-xs leading-relaxed text-faint">
-        Locking reloads Lop, so you'll be asked for your passcode again (one attempt, 30 seconds).
+        Locking reloads Tetris, so you'll be asked for your passcode again (one attempt, 30 seconds).
       </p>
     </Modal>
   );

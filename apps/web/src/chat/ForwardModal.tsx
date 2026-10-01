@@ -20,7 +20,6 @@ export function ForwardModal({
   const rows = useMemo(() => {
     const term = q.trim().toLowerCase();
     return conversations
-      .filter((c) => !c.blocked)
       .filter(
         (c) =>
           !term ||
