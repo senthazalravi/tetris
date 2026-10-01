@@ -1,5 +1,6 @@
 import { Clock3, KeyRound, LockKeyhole, MessageCircleOff, ShieldCheck, Timer } from "lucide-react";
 import { Button, LoopMark, Wordmark } from "@/ui/kit";
+import { SiteFooter, type LegalPageId } from "@/ui/SiteFooter";
 import { ThemeButton } from "@/ui/ThemeButton";
 
 const POINTS = [
@@ -28,9 +29,11 @@ const POINTS = [
 export function Landing({
   onLogin,
   onRegister,
+  onOpenLegal,
 }: {
   onLogin: () => void;
   onRegister: () => void;
+  onOpenLegal: (id: LegalPageId) => void;
 }) {
   return (
     <div className="relative h-full overflow-y-auto bg-bg">
@@ -108,9 +111,7 @@ export function Landing({
         ))}
       </section>
 
-      <footer className="relative border-t border-line px-6 py-6 text-center text-xs text-faint">
-        Built on Cloudflare Workers, D1, R2 and Durable Objects. Free to run, open to inspect.
-      </footer>
+      <SiteFooter onOpenLegal={onOpenLegal} />
     </div>
   );
 }
