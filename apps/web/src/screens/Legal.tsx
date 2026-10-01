@@ -59,9 +59,9 @@ function PrivacyBody() {
   return (
     <>
       <section className="space-y-3">
-        <H>What Lop is</H>
+        <H>What Tetris is</H>
         <p>
-          Lop is a web messenger. Messages and files are end-to-end encrypted on your device before
+          Tetris is a web messenger. Messages and files are end-to-end encrypted on your device before
           they are sent. We design the service so we cannot read your message or file contents.
         </p>
       </section>
@@ -69,17 +69,16 @@ function PrivacyBody() {
         <H>Account information</H>
         <p>When you create an account we store:</p>
         <ul className="list-disc space-y-1 pl-5">
-          <li>Email address</li>
+          <li>Email address (used only to send you notifications, never to sign in)</li>
           <li>Username and display name</li>
-          <li>Authentication proofs derived from your password (never your password itself)</li>
-          <li>A verifier related to your vault passcode (never the passcode itself)</li>
+          <li>A verifier related to your 8-digit passcode (never the passcode itself)</li>
           <li>Public cryptographic keys needed for encrypted messaging</li>
         </ul>
         <p>
-          If you use “forgot password”, you confirm the email and @username on your account in the
-          app. If your vault is still active you must also enter your vault passcode; if the vault
-          was already wiped, email + username is enough to set a new account password. No reset
-          email is sent. Your vault passcode itself cannot be recovered.
+          There is no account password and no “forgot passcode” option. Your passcode cannot be
+          recovered by us. If it is entered wrongly, or not within 30 seconds, on the browser that
+          last unlocked the account, your chats and contacts are cleared and you choose a new
+          passcode.
         </p>
       </section>
       <section className="space-y-3">
@@ -108,8 +107,8 @@ function PrivacyBody() {
         <ul className="list-disc space-y-1 pl-5">
           <li>We do not require a phone number</li>
           <li>We do not sell your personal data</li>
-          <li>We do not show ads inside Lop</li>
-          <li>We do not provide a public people directory — lookup is by exact username only</li>
+          <li>We do not show ads inside Tetris</li>
+          <li>Accounts are created by an administrator; the in-app search only lists those existing users</li>
         </ul>
       </section>
       <section className="space-y-3">
@@ -132,14 +131,14 @@ function TermsBody() {
       <section className="space-y-3">
         <H>Agreement</H>
         <p>
-          By creating an account or using Lop, you agree to these Terms of Service and our Privacy
+          By creating an account or using Tetris, you agree to these Terms of Service and our Privacy
           Policy. If you do not agree, do not use the service.
         </p>
       </section>
       <section className="space-y-3">
         <H>The service</H>
         <p>
-          Lop provides end-to-end encrypted messaging on the web with automatic message expiry and a
+          Tetris provides end-to-end encrypted messaging on the web with automatic message expiry and a
           vault passcode unlock gate. Features may change as the product develops. The service is
           offered as-is, without a guarantee of uninterrupted availability.
         </p>
@@ -147,10 +146,10 @@ function TermsBody() {
       <section className="space-y-3">
         <H>Your responsibilities</H>
         <ul className="list-disc space-y-1 pl-5">
-          <li>Keep your password and vault passcode secret</li>
-          <li>Use Lop lawfully and respectfully</li>
+          <li>Keep your passcode secret</li>
+          <li>Use Tetris lawfully and respectfully</li>
           <li>Do not attempt to attack, abuse, or disrupt the service or other users</li>
-          <li>Do not use Lop to distribute malware or content that is illegal where you are</li>
+          <li>Do not use Tetris to distribute malware or content that is illegal where you are</li>
         </ul>
       </section>
       <section className="space-y-3">
@@ -165,14 +164,14 @@ function TermsBody() {
         <H>Expiry</H>
         <p>
           Messages and attachments are designed to disappear after about 24 hours. Recipients may
-          still hold copies on their own devices until expiry or local cleanup. Do not rely on Lop
+          still hold copies on their own devices until expiry or local cleanup. Do not rely on Tetris
           alone where you need long-term archives or legal retention.
         </p>
       </section>
       <section className="space-y-3">
         <H>Limitation of liability</H>
         <p>
-          To the fullest extent permitted by law, Lop and its developer are not liable for indirect,
+          To the fullest extent permitted by law, Tetris and its developer are not liable for indirect,
           incidental, or consequential damages, or for loss of messages, contacts, or access arising
           from wipe rules, expiry, misuse, or service interruption.
         </p>
@@ -203,7 +202,7 @@ function SecurityBody() {
       <section className="space-y-3">
         <H>Vault passcode</H>
         <p>
-          Your vault passcode is separate from your account password and is never sent to the server.
+          Your passcode is never sent to the server.
           It protects local keys and sealed on-device data. The unlock window is short and single-attempt
           by design: failure can wipe communication state so a guessed passcode cannot casually open
           an old inbox.
@@ -221,7 +220,7 @@ function SecurityBody() {
         <H>Browser trust</H>
         <p>
           Like other web messengers, security depends on the integrity of the code running in your
-          browser. Keep your browser updated. Prefer opening Lop only from the official site you
+          browser. Keep your browser updated. Prefer opening Tetris only from the official site you
           trust. Compromised devices or malicious extensions can undermine any web app.
         </p>
       </section>

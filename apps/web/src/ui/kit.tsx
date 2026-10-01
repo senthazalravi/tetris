@@ -7,20 +7,19 @@ import {
 } from "react";
 import { Loader2, X } from "lucide-react";
 import { createAvatar } from "@usespaceui/avatars";
+import { PASSCODE_LENGTH } from "@tetris/config";
 
 /* ---------------- brand ---------------- */
 
-export function LoopMark({ size = 28, className = "" }: { size?: number; className?: string }) {
+export function TetrisMark({ size = 28, className = "" }: { size?: number; className?: string }) {
   return (
     <svg width={size} height={size} viewBox="0 0 64 64" className={className} aria-hidden>
-      <path
-        d="M32 12a20 20 0 1 0 19.2 14.4"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="7"
-        strokeLinecap="round"
-      />
-      <circle cx="49" cy="15" r="5" fill="#d4ff3a" />
+      <g fill="currentColor">
+        <rect x="6" y="10" width="16" height="16" rx="3" />
+        <rect x="24" y="10" width="16" height="16" rx="3" />
+        <rect x="42" y="10" width="16" height="16" rx="3" />
+      </g>
+      <rect x="24" y="28" width="16" height="16" rx="3" fill="#d4ff3a" />
     </svg>
   );
 }
@@ -28,12 +27,12 @@ export function LoopMark({ size = 28, className = "" }: { size?: number; classNa
 export function Wordmark({ size = 26 }: { size?: number }) {
   return (
     <span className="inline-flex items-center gap-2 text-fg">
-      <LoopMark size={size} />
+      <TetrisMark size={size} />
       <span
         className="font-display font-extrabold leading-none tracking-tight"
         style={{ fontSize: size * 0.95 }}
       >
-        lop
+        tetris
       </span>
     </span>
   );
@@ -295,3 +294,42 @@ export function Spinner({ size = 18 }: { size?: number }) {
   return <Loader2 size={size} className="spin text-muted" />;
 }
 
+
+/* ---------------- passcode ---------------- */
+
+/** Digits only, capped at PASSCODE_LENGTH. Shows a numeric keypad on phones. */
+export function PasscodeField({
+  label,
+  value,
+  onValue,
+  hint,
+  error,
+  autoFocus,
+  autoComplete = "off",
+}: {
+  label: string;
+  value: string;
+  onValue: (v: string) => void;
+  hint?: ReactNode;
+  error?: string | null;
+  autoFocus?: boolean;
+  autoComplete?: string;
+}) {
+  return (
+    <Field
+      label={label}
+      type="password"
+      inputMode="numeric"
+      pattern="\d*"
+      maxLength={PASSCODE_LENGTH}
+      value={value}
+      onChange={(e) => onValue(e.target.value.replace(/\D/g, "").slice(0, PASSCODE_LENGTH))}
+      autoComplete={autoComplete}
+      autoFocus={autoFocus}
+      hint={hint ?? `${PASSCODE_LENGTH} digits`}
+      error={error}
+      className="[&_input]:font-mono [&_input]:tracking-[0.3em]"
+      required
+    />
+  );
+}

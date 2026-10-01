@@ -1,8 +1,9 @@
 import { useState, type FormEvent } from "react";
-import { EyeOff, LogOut, ShieldCheck, TimerOff, Trash2, KeyRound } from "lucide-react";
-import { PASSCODE_MIN_LENGTH } from "@lop/config";
-import { Button, Field, Wordmark } from "@/ui/kit";
+import { ArrowLeft, EyeOff, KeyRound, TimerOff, Trash2, Hourglass } from "lucide-react";
+import { PASSCODE_PATTERN } from "@tetris/config";
+import { Button, Field, PasscodeField, Wordmark } from "@/ui/kit";
 import { ThemeButton } from "@/ui/ThemeButton";
+import { Turnstile, turnstileEnabled } from "@/ui/Turnstile";
 import { useSession } from "@/state/session";
 
 const REASONS = {
@@ -16,6 +17,11 @@ const REASONS = {
     title: "Time ran out",
     body: "The 30-second window closed, so your chats, contacts and messages have been cleared. Your account and profile are untouched.",
   },
+  EXPIRED: {
+    icon: Hourglass,
+    title: "Your passcode has expired",
+    body: "Confirm the email on file for your account to choose a new 8-digit passcode.",
+  },
   REMOTE: {
     icon: Trash2,
     title: "Your chats were cleared",
@@ -23,9 +29,13 @@ const REASONS = {
   },
 } as const;
 
-/** Shown after a wipe (or first ever setup) to choose the passcode for the new vault. */
-export function VaultSetup() {
-  const { user, notice, setupVault, logout } = useSession();
+/** Expired passcode: confirm the email on file, then choose a new 8-digit passcode. */
+export function Reset() {
+  const { resetUsername, notice, reset, cancelReset } = useSession();
+  const [username, setUsername] = useState(resetUsername);
+  const [email, setEmail] = useState("");
+  const [captcha, setCaptcha] = useState<string | null>(null);
+  const [resetKey, setResetKey] = useState(0);
   const [passcode, setPasscode] = useState("");
   const [again, setAgain] = useState("");
   const [busy, setBusy] = useState(false);
@@ -35,15 +45,25 @@ export function VaultSetup() {
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    if (passcode.length < PASSCODE_MIN_LENGTH) {
-      return setError(`Use at least ${PASSCODE_MIN_LENGTH} characters.`);
-    }
+    if (!username.trim() || !email.trim()) return setError("Enter your username and email.");
+    if (!PASSCODE_PATTERN.test(passcode)) return setError("The passcode is exactly 8 digits.");
     if (passcode !== again) return setError("Passcodes don't match.");
     setBusy(true);
+    if (turnstileEnabled && !captcha) {
+      setBusy(false);
+      return setError("Complete the verification first.");
+    }
     try {
-      await setupVault(passcode);
+      await reset({
+        username: username.trim().toLowerCase().replace(/^@/, ""),
+        email: email.trim(),
+        passcode,
+        turnstileToken: captcha ?? undefined,
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not set up your vault");
+      setError(err instanceof Error ? err.message : "Could not reset your passcode");
+      setResetKey((k) => k + 1);
+      setCaptcha(null);
       setBusy(false);
     }
   }
@@ -55,8 +75,8 @@ export function VaultSetup() {
         <Wordmark size={26} />
         <div className="flex items-center gap-1">
           <ThemeButton />
-          <Button variant="ghost" size="sm" onClick={() => void logout()}>
-            <LogOut size={15} /> Sign out
+          <Button variant="ghost" size="sm" onClick={cancelReset}>
+            <ArrowLeft size={15} /> Back
           </Button>
         </div>
       </header>
@@ -79,47 +99,49 @@ export function VaultSetup() {
           >
             <div className="flex items-center gap-3">
               <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-s3 text-pop">
-                {reason ? <KeyRound size={20} /> : <ShieldCheck size={20} />}
+                <KeyRound size={20} />
               </div>
               <div>
-                <h1 className="font-display text-xl font-extrabold">
-                  {reason ? "Start fresh" : "Set your vault passcode"}
-                </h1>
-                <p className="text-sm text-muted">
-                  {user ? `@${user.username}` : ""} · new encryption keys will be created
-                </p>
+                <h1 className="font-display text-xl font-extrabold">Choose a new passcode</h1>
+                <p className="text-sm text-muted">New encryption keys will be created</p>
               </div>
             </div>
 
-            <p className="text-sm leading-relaxed text-muted">
-              Choose the passcode that unlocks this vault. You can reuse your old one, or pick a
-              new one. It never leaves your device.
-            </p>
-
             <Field
-              label="Vault passcode"
-              type="password"
-              value={passcode}
-              onChange={(e) => setPasscode(e.target.value)}
-              autoComplete="off"
-              autoFocus
+              label="Username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              autoComplete="username"
+              autoCapitalize="none"
+              spellCheck={false}
               required
             />
             <Field
+              label="Email on file"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
+              autoCapitalize="none"
+              spellCheck={false}
+              required
+              autoFocus={!!resetUsername}
+            />
+            <PasscodeField label="New passcode" value={passcode} onValue={setPasscode} />
+            <PasscodeField
               label="Repeat passcode"
-              type="password"
               value={again}
-              onChange={(e) => setAgain(e.target.value)}
-              autoComplete="off"
-              required
+              onValue={setAgain}
+              hint="Cannot be recovered if you forget it"
             />
+            <Turnstile onToken={setCaptcha} resetKey={resetKey} />
             {error && (
               <p role="alert" className="rounded-xl bg-danger/10 px-4 py-3 text-sm text-danger">
                 {error}
               </p>
             )}
             <Button type="submit" size="lg" block busy={busy}>
-              {busy ? "Generating keys…" : "Open my empty vault"}
+              {busy ? "Generating keys…" : "Set passcode"}
             </Button>
           </form>
         </div>
@@ -136,11 +158,11 @@ export function Replaced() {
         <Wordmark size={30} />
         <h1 className="font-display text-3xl font-extrabold">Opened somewhere else</h1>
         <p className="text-muted">
-          This account was unlocked in another browser, which now holds your keys. Lop supports one
+          This account was unlocked in another browser, which now holds your keys. Tetris supports one
           active device at a time.
         </p>
         <Button size="lg" onClick={() => location.reload()}>
-          Use Lop here instead
+          Use Tetris here instead
         </Button>
       </div>
     </div>

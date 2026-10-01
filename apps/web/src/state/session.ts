@@ -1,17 +1,19 @@
 import { create } from "zustand";
 import {
-  deriveAuthProof,
   deriveVaultSecrets,
   generateSaltB64,
   importAesKey,
-} from "@lop/crypto";
-import type { ChallengeDto, SessionUser } from "@lop/types";
+} from "@tetris/crypto";
+import type { ChallengeDto, SessionUser } from "@tetris/types";
 import { api, ApiError, setAuthLostHandler, setVaultToken } from "@/lib/api";
 import { deleteDatabase, dbNameFor, readStoredEpoch } from "./localdb";
 import { isUnlocked, lockMemory, openVault, vault } from "./vault";
 import { stopEngine } from "./chat";
 
-export type Phase = "boot" | "anon" | "locked" | "vault-setup" | "ready" | "replaced";
+export type Phase = "boot" | "anon" | "locked" | "reset" | "ready" | "replaced";
+
+/** What the unlocked app is showing: the Tetris home screen or a chat. */
+export type Screen = "game" | "chat";
 
 export interface ActiveChallenge {
   id: string;
@@ -22,7 +24,7 @@ export interface ActiveChallenge {
 }
 
 export interface WipeNotice {
-  reason: "WRONG_PASSCODE" | "TIMEOUT" | "REMOTE";
+  reason: "WRONG_PASSCODE" | "TIMEOUT" | "REMOTE" | "EXPIRED";
 }
 
 interface SessionState {
@@ -32,29 +34,30 @@ interface SessionState {
   notice: WipeNotice | null;
   freshDevice: boolean;
 
+  /** Which screen the unlocked app shows. */
+  screen: Screen;
+  /** A Tetris round has ended this session, which unlocks the chat search. */
+  gameDone: boolean;
+  /** Username to prefill on the reset screen. */
+  resetUsername: string;
+
   boot(): Promise<void>;
-  register(input: {
-    email: string;
+  /** Sign in: username + passcode. Opens the 30s challenge and answers it at once. */
+  start(input: { username: string; passcode: string; turnstileToken?: string }): Promise<void>;
+  /** Expired passcode: confirm the email on file, then choose a new one. */
+  reset(input: {
     username: string;
-    displayName: string;
-    password: string;
+    email: string;
     passcode: string;
     turnstileToken?: string;
   }): Promise<void>;
-  login(input: { login: string; password: string; turnstileToken?: string }): Promise<void>;
-  resetAccountPassword(input: {
-    email: string;
-    username: string;
-    passcode?: string;
-    password: string;
-    turnstileToken?: string;
-  }): Promise<{ message: string }>;
-  changePassword(input: { currentPassword: string; newPassword: string }): Promise<void>;
+  openReset(username?: string): void;
+  cancelReset(): void;
+  markGameDone(): void;
+  setScreen(screen: Screen): void;
   changeVaultPasscode(input: { currentPasscode: string; newPasscode: string }): Promise<void>;
-  deleteAccount(password: string): Promise<void>;
   unlock(passcode: string): Promise<{ ok: boolean }>;
   expire(): Promise<void>;
-  setupVault(passcode: string): Promise<void>;
   logout(): Promise<void>;
   remoteWipe(): Promise<void>;
   markReplaced(): void;
@@ -65,7 +68,7 @@ interface SessionState {
 type AuthPayload = {
   user: SessionUser | null;
   challenge?: ChallengeDto;
-  vaultSetupRequired?: boolean;
+  expired?: boolean;
 };
 
 function toActive(c: ChallengeDto): ActiveChallenge {
@@ -95,10 +98,22 @@ async function wipeLocalNow(userId: string | undefined) {
   setVaultToken(null);
   if (userId) await deleteDatabase(dbNameFor(userId));
   try {
-    new BroadcastChannel("lop-wipe").postMessage({ userId });
+    new BroadcastChannel("tetris-wipe").postMessage({ userId });
   } catch {
     /* BroadcastChannel unavailable */
   }
+}
+
+/** After a wipe the passcode is expired: send the user to the email-confirmed reset. */
+async function enterReset(notice: WipeNotice) {
+  let username = useSession.getState().user?.username ?? useSession.getState().resetUsername;
+  try {
+    const res = await api.post<AuthPayload>("/auth/resume");
+    if (res.user) username = res.user.username;
+  } catch {
+    /* keep whatever username we already know */
+  }
+  useSession.setState({ phase: "reset", resetUsername: username, challenge: null, notice });
 }
 
 export const useSession = create<SessionState>((set, get) => ({
@@ -107,6 +122,9 @@ export const useSession = create<SessionState>((set, get) => ({
   challenge: null,
   notice: null,
   freshDevice: false,
+  screen: "game",
+  gameDone: false,
+  resetUsername: "",
 
   async boot() {
     setAuthLostHandler((code) => {
@@ -125,8 +143,14 @@ export const useSession = create<SessionState>((set, get) => ({
       const res = await api.post<AuthPayload>("/auth/resume");
       if (!res.user) return set({ phase: "anon", user: null });
       await reconcileLocal(res.user);
-      if (res.vaultSetupRequired) {
-        return set({ phase: "vault-setup", user: res.user, challenge: null });
+      if (res.expired) {
+        return set({
+          phase: "reset",
+          user: res.user,
+          resetUsername: res.user.username,
+          challenge: null,
+          notice: { reason: "EXPIRED" },
+        });
       }
       set({
         phase: "locked",
@@ -138,89 +162,49 @@ export const useSession = create<SessionState>((set, get) => ({
     }
   },
 
-  async register(input) {
-    const authSalt = generateSaltB64();
-    const vaultSalt = generateSaltB64();
-    const [authProof, vault] = await Promise.all([
-      deriveAuthProof(input.password, authSalt),
-      deriveVaultSecrets(input.passcode, vaultSalt),
-    ]);
-    const res = await api.post<{ user: SessionUser; vaultToken: string }>(
-      "/auth/register",
-      {
-        email: input.email,
-        username: input.username,
-        displayName: input.displayName,
-        authSalt,
-        authProof,
-        vaultSalt,
-        vaultVerifier: vault.verifier,
-        turnstileToken: input.turnstileToken,
-      },
-    );
-    await deleteDatabase(dbNameFor(res.user.id));
-    setVaultToken(res.vaultToken);
-    await openVault({
-      userId: res.user.id,
-      epoch: res.user.communicationEpoch,
-      vaultKeyRaw: vault.vaultKey,
-    });
-    set({ user: res.user, phase: "ready", freshDevice: true, notice: null });
-  },
-
-  async login(input) {
-    const { authSalt } = await api.post<{ authSalt: string }>("/auth/prelogin", {
-      login: input.login,
-    });
-    const authProof = await deriveAuthProof(input.password, authSalt);
-    const res = await api.post<AuthPayload>("/auth/login", {
-      login: input.login,
-      authProof,
+  async start(input) {
+    const res = await api.post<AuthPayload>("/auth/start", {
+      username: input.username,
       turnstileToken: input.turnstileToken,
     });
-    if (!res.user) throw new ApiError(500, "Unexpected response");
-    await reconcileLocal(res.user);
-    if (res.vaultSetupRequired) {
-      return set({ phase: "vault-setup", user: res.user, challenge: null, notice: null });
+    if (res.expired) {
+      return set({
+        phase: "reset",
+        user: null,
+        resetUsername: input.username,
+        challenge: null,
+        notice: { reason: "EXPIRED" },
+      });
     }
+    if (!res.challenge) throw new ApiError(500, "Unexpected response");
     set({
-      phase: "locked",
-      user: res.user,
-      challenge: res.challenge ? toActive(res.challenge) : null,
+      challenge: toActive(res.challenge),
+      user: null,
+      resetUsername: input.username,
       notice: null,
     });
+    await get().unlock(input.passcode);
   },
 
-  async resetAccountPassword(input) {
-    const pre = await api.post<{ vaultSalt: string; requiresVault: boolean }>(
-      "/auth/password-reset/preflight",
-      { email: input.email },
-    );
-    if (pre.requiresVault && !input.passcode?.trim()) {
-      throw new ApiError(
-        400,
-        "This account still has an active vault. Enter your vault passcode (not the account password).",
-      );
-    }
-    const authSalt = generateSaltB64();
-    const authProof = await deriveAuthProof(input.password, authSalt);
-    let vaultVerifier: string | undefined;
-    if (pre.requiresVault) {
-      vaultVerifier = (await deriveVaultSecrets(input.passcode!.trim(), pre.vaultSalt)).verifier;
-    }
-    return api.post<{ message: string }>("/auth/password-reset", {
-      email: input.email,
-      username: input.username,
-      vaultVerifier: vaultVerifier ?? null,
-      authSalt,
-      authProof,
-      turnstileToken: input.turnstileToken,
-    });
+  openReset(username) {
+    set({ phase: "reset", resetUsername: username ?? get().resetUsername, challenge: null });
+  },
+
+  cancelReset() {
+    set({ phase: "anon", user: null, challenge: null, notice: null });
+  },
+
+  markGameDone() {
+    set({ gameDone: true });
+  },
+
+  setScreen(screen) {
+    set({ screen });
   },
 
   async unlock(passcode) {
     const { challenge, user } = get();
-    if (!challenge || !user) return { ok: false };
+    if (!challenge) return { ok: false };
     try {
       // Claim the attempt on the server clock before the slow key derivation.
       await api.post("/auth/unlock/begin", { challengeId: challenge.id });
@@ -241,17 +225,19 @@ export const useSession = create<SessionState>((set, get) => ({
       unlocked: boolean;
       wiped: boolean;
       reason?: "WRONG_PASSCODE" | "TIMEOUT";
+      userId?: string;
       vaultToken?: string;
       user?: SessionUser;
     }>("/auth/unlock", { challengeId: challenge.id, verifier: secrets.verifier });
 
     if (!res.unlocked || !res.vaultToken || !res.user) {
-      await wipeLocalNow(user.id);
-      set({
-        phase: "vault-setup",
-        challenge: null,
-        notice: { reason: res.reason ?? "WRONG_PASSCODE" },
-      });
+      if (!res.wiped) {
+        // Not this account's own browser (or no such account): nothing was wiped.
+        set({ phase: "anon", user: null, challenge: null });
+        throw new ApiError(401, "Incorrect username or passcode");
+      }
+      await wipeLocalNow(res.userId ?? user?.id);
+      await enterReset({ reason: res.reason ?? "WRONG_PASSCODE" });
       return { ok: false };
     }
 
@@ -261,7 +247,14 @@ export const useSession = create<SessionState>((set, get) => ({
       epoch: res.user.communicationEpoch,
       vaultKeyRaw: secrets.vaultKey,
     });
-    set({ phase: "ready", user: res.user, challenge: null, freshDevice });
+    set({
+      phase: "ready",
+      screen: "game",
+      gameDone: false,
+      user: res.user,
+      challenge: null,
+      freshDevice,
+    });
     return { ok: true };
   },
 
@@ -270,23 +263,34 @@ export const useSession = create<SessionState>((set, get) => ({
     const { challenge, user } = get();
     if (!challenge || !user || get().phase !== "locked") return;
     // Local data goes immediately; the server confirms (and the cron backs it up).
-    await wipeLocalNow(user.id);
-    set({ phase: "vault-setup", challenge: null, notice: { reason: "TIMEOUT" } });
+    let wiped = true;
     try {
-      await api.post("/auth/unlock", { challengeId: challenge.id, verifier: null });
+      const res = await api.post<{ wiped?: boolean }>("/auth/unlock", {
+        challengeId: challenge.id,
+        verifier: null,
+      });
+      wiped = res.wiped !== false;
     } catch {
       // Already settled elsewhere, or offline: the sweeper finishes the job.
     }
+    if (!wiped) {
+      // Not this account's own browser: the server did not wipe, so neither do we.
+      set({ phase: "anon", user: null, challenge: null });
+      return;
+    }
+    await wipeLocalNow(user.id);
+    await enterReset({ reason: "TIMEOUT" });
   },
 
-  async setupVault(passcode) {
-    const user = get().user;
-    if (!user) return;
+  async reset(input) {
     const vaultSalt = generateSaltB64();
-    const secrets = await deriveVaultSecrets(passcode, vaultSalt);
-    const res = await api.post<{ vaultToken: string; user: SessionUser }>("/auth/vault", {
+    const secrets = await deriveVaultSecrets(input.passcode, vaultSalt);
+    const res = await api.post<{ vaultToken: string; user: SessionUser }>("/auth/reset", {
+      username: input.username,
+      email: input.email,
       vaultSalt,
       vaultVerifier: secrets.verifier,
+      turnstileToken: input.turnstileToken,
     });
     await deleteDatabase(dbNameFor(res.user.id));
     setVaultToken(res.vaultToken);
@@ -295,7 +299,14 @@ export const useSession = create<SessionState>((set, get) => ({
       epoch: res.user.communicationEpoch,
       vaultKeyRaw: secrets.vaultKey,
     });
-    set({ phase: "ready", user: res.user, freshDevice: true });
+    set({
+      phase: "ready",
+      screen: "game",
+      gameDone: false,
+      user: res.user,
+      freshDevice: true,
+      notice: null,
+    });
   },
 
   async logout() {
@@ -308,20 +319,6 @@ export const useSession = create<SessionState>((set, get) => ({
     }
     setVaultToken(null);
     set({ phase: "anon", user: null, challenge: null, notice: null });
-  },
-
-  async changePassword(input) {
-    const login = get().user?.email;
-    if (!login) throw new Error("Not signed in");
-    const { authSalt } = await api.post<{ authSalt: string }>("/auth/prelogin", { login });
-    const oldAuthProof = await deriveAuthProof(input.currentPassword, authSalt);
-    const newSalt = generateSaltB64();
-    const authProof = await deriveAuthProof(input.newPassword, newSalt);
-    await api.post("/auth/change-password", {
-      oldAuthProof,
-      authSalt: newSalt,
-      authProof,
-    });
   },
 
   async changeVaultPasscode(input) {
@@ -341,20 +338,6 @@ export const useSession = create<SessionState>((set, get) => ({
     await vault().db.rekey(newKey);
   },
 
-  async deleteAccount(password) {
-    const login = get().user?.email;
-    const userId = get().user?.id;
-    if (!login || !userId) throw new Error("Not signed in");
-    const { authSalt } = await api.post<{ authSalt: string }>("/auth/prelogin", { login });
-    const authProof = await deriveAuthProof(password, authSalt);
-    stopEngine();
-    await api.post("/auth/delete-account", { authProof });
-    lockMemory();
-    setVaultToken(null);
-    await deleteDatabase(dbNameFor(userId));
-    set({ phase: "anon", user: null, challenge: null, notice: null });
-  },
-
   /** Another tab or the server wiped us: drop memory and local data. */
   async remoteWipe() {
     const user = get().user;
@@ -362,7 +345,7 @@ export const useSession = create<SessionState>((set, get) => ({
     if (get().phase === "anon") return;
     set({ phase: "boot" });
     await get().boot();
-    if (get().phase === "vault-setup") set({ notice: { reason: "REMOTE" } });
+    if (get().phase === "reset") set({ notice: { reason: "REMOTE" } });
   },
 
   /** Another browser signed in and took over this account's single device. */
@@ -383,7 +366,7 @@ export const useSession = create<SessionState>((set, get) => ({
 
 // Same-browser tabs: a wipe in one tab clears the others immediately.
 try {
-  const ch = new BroadcastChannel("lop-wipe");
+  const ch = new BroadcastChannel("tetris-wipe");
   ch.onmessage = (ev: MessageEvent<{ userId?: string }>) => {
     const s = useSession.getState();
     if (s.user && ev.data?.userId === s.user.id && (isUnlocked() || s.phase === "ready")) {
