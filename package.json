@@ -17,6 +17,7 @@
     "test": "npm run test --workspaces --if-present",
     "test:e2e": "tsx scripts/e2e.ts",
     "users:seed": "tsx scripts/seed-users.ts",
+    "groups:seed": "tsx scripts/seed-groups.ts",
     "db:migrate:local": "npm run db:migrate:local -w @tetris/api",
     "db:migrate:remote": "npm run db:migrate:remote -w @tetris/api"
   },

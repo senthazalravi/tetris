@@ -4,6 +4,7 @@
  *   cp users.example.json users.local.json   # then edit (gitignored)
  *   npm run users:seed                       # local D1
  *   npm run users:seed -- --remote           # Cloudflare D1
+ *   npm run users:seed -- --replace          # delete all users and data first
  *
  * Passcodes are stretched here (Argon2id) exactly like the browser does, so
  * only a salt and a hash of the verifier ever reach the database. Re-seeding an
@@ -25,6 +26,24 @@ interface SeedUser {
 }
 
 const remote = process.argv.includes("--remote");
+// Delete every existing user and all of their data before seeding.
+const replace = process.argv.includes("--replace");
+
+const WIPE_ALL = [
+  "messages",
+  "attachments",
+  "group_members",
+  "conversation_members",
+  "conversations",
+  "contacts",
+  "prekeys",
+  "devices",
+  "unlocks",
+  "unlock_challenges",
+  "sessions",
+  "wipe_operations",
+  "users",
+];
 const file = process.argv.find((a) => a.endsWith(".json")) ?? "users.local.json";
 const DB_NAME = "tetris-db";
 
@@ -75,7 +94,8 @@ async function main() {
   }
 
   const tmp = join(tmpdir(), `tetris-seed-${randomUUID()}.sql`);
-  writeFileSync(tmp, statements.join("\n"), "utf8");
+  const prefix = replace ? WIPE_ALL.map((t) => `DELETE FROM ${t};`) : [];
+  writeFileSync(tmp, [...prefix, ...statements].join("\n"), "utf8");
   try {
     execFileSync(
       "npx",
