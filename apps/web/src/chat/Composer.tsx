@@ -32,6 +32,7 @@ import {
   nameOf,
   sendEdit,
   sendMessage,
+  setDraft,
   setEditing,
   setReplyTo,
   stopTyping,
@@ -95,6 +96,11 @@ export function Composer({
   const [poll, setPoll] = useState(false);
   const [camera, setCamera] = useState(false);
   const area = useRef<HTMLTextAreaElement>(null);
+  const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const textRef = useRef(text);
+  textRef.current = text;
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
   const picker = useOutside<HTMLDivElement>(emoji, useCallback(() => setEmoji(false), []));
   const attachMenu = useOutside<HTMLDivElement>(menu, useCallback(() => setMenu(false), []));
   const inputs = {
@@ -114,13 +120,33 @@ export function Composer({
     void sendMessage(conv.id, { text: "", file: voice, voiceMs: durationMs, replyTo: reply });
   });
 
-  // A draft belongs to its conversation.
+  // A draft belongs to its conversation — restore on switch, flush on leave.
   useEffect(() => {
-    setText("");
+    setText(useChat.getState().drafts[conv.id] ?? "");
     setEmoji(false);
     setMenu(false);
     area.current?.focus();
+    const id = conv.id;
+    return () => {
+      if (draftTimer.current) {
+        clearTimeout(draftTimer.current);
+        draftTimer.current = null;
+      }
+      if (!editingRef.current) void setDraft(id, textRef.current);
+    };
   }, [conv.id]);
+
+  // Debounce-persist draft while typing (skip while editing).
+  useEffect(() => {
+    if (editing) return;
+    if (draftTimer.current) clearTimeout(draftTimer.current);
+    draftTimer.current = setTimeout(() => {
+      void setDraft(conv.id, text);
+    }, 300);
+    return () => {
+      if (draftTimer.current) clearTimeout(draftTimer.current);
+    };
+  }, [text, conv.id, editing]);
 
   useEffect(() => {
     if (reply) area.current?.focus();
@@ -179,6 +205,7 @@ export function Composer({
     }
     void sendMessage(conv.id, { text, file, replyTo: reply });
     setText("");
+    void setDraft(conv.id, "");
     onFile(null);
     setEmoji(false);
     requestAnimationFrame(() => area.current?.focus());

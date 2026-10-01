@@ -8,11 +8,13 @@ import {
   Clock,
   Copy,
   CornerUpLeft,
+  Forward,
   Info,
   Pencil,
   Plus,
   RotateCw,
   ShieldAlert,
+  Star,
   Trash2,
 } from "lucide-react";
 import { formatTime, linkify } from "@/lib/format";
@@ -25,11 +27,15 @@ import {
   sendReaction,
   setEditing,
   setReplyTo,
+  setStarred,
   toast,
+  useChat,
 } from "@/state/chat";
 import { useOutside } from "@/ui/hooks";
 import { AttachmentView } from "./Attachment";
 import { EmojiPicker } from "./EmojiPicker";
+import { ForwardModal } from "./ForwardModal";
+import { LinkPreview } from "./LinkPreview";
 import { MessageInfo } from "./Modals";
 import { PollCard } from "./Poll";
 
@@ -86,15 +92,19 @@ function BubbleImpl({
   peerName,
   myId,
   first,
+  highlight,
 }: {
   m: LocalMessage;
   peerName: string;
   myId: string;
   first: boolean;
+  highlight?: boolean;
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number; up: boolean } | null>(null);
   const [more, setMore] = useState(false);
   const [info, setInfo] = useState(false);
+  const [forward, setForward] = useState(false);
+  const starred = useChat((s) => Boolean(s.starred[m.id]));
   const trigger = useRef<HTMLButtonElement>(null);
   const close = useCallback(() => {
     setMenu(null);
@@ -104,6 +114,8 @@ function BubbleImpl({
   const c = m.content;
 
   const out = m.direction === "out";
+  const canForward =
+    !m.deleted && (c.kind === "text" || c.kind === "file" || c.kind === "poll");
 
   function openMenu() {
     const r = trigger.current?.getBoundingClientRect();
@@ -169,6 +181,8 @@ function BubbleImpl({
   const bare = c.kind === "file" && !text && !c.attachment?.voice;
   const bigEmoji = c.kind === "text" && !c.replyTo && EMOJI_ONLY.test(text);
   const mine = m.reactions?.[myId];
+  const hasLink =
+    Boolean(text) && c.kind !== "poll" && linkify(text).some((p) => p.type === "link");
 
   // Group reactions by emoji: 👍 2
   const grouped = new Map<string, number>();
@@ -192,10 +206,19 @@ function BubbleImpl({
     <div
       className={`group flex items-end gap-1 ${out ? "flex-row-reverse" : ""} ${first ? "mt-2" : "mt-0.5"} ${
         grouped.size ? "mb-4" : ""
-      }`}
+      } ${highlight ? "rounded-2xl ring-2 ring-pop/70 ring-offset-2 ring-offset-bg" : ""}`}
       data-mid={m.id}
     >
       <div className={`bubble ${out ? "out" : "in"} ${bare ? "!p-1 !pb-0.5" : ""}`}>
+        {"forwarded" in c && c.forwarded && (
+          <div
+            className={`mb-1 flex items-center gap-1 text-[11px] font-medium italic ${
+              out ? "text-white/80" : "text-muted"
+            }`}
+          >
+            Forwarded
+          </div>
+        )}
         {c.replyTo && (
           <div
             className={`mb-1.5 cursor-default overflow-hidden rounded-lg border-l-[3px] px-2.5 py-1.5 text-[13px] ${
@@ -225,11 +248,16 @@ function BubbleImpl({
           </span>
         )}
 
+        {hasLink && text && c.kind !== "poll" && <LinkPreview text={text} />}
+
         <span
           className={`float-right ml-3 mt-1 inline-flex select-none items-center gap-1.5 align-bottom text-[10.5px] opacity-85 ${
             bare ? "px-1.5 pb-0.5" : ""
           }`}
         >
+          {starred && (
+            <Star size={11} className="fill-current text-warn" aria-label="Starred" />
+          )}
           {m.editedAt && (
             <span className="italic" title={`Edited ${formatTime(m.editedAt)}`}>
               Edited
@@ -323,6 +351,24 @@ function BubbleImpl({
                 Copy text
               </MenuItem>
             )}
+            {canForward && (
+              <MenuItem
+                icon={Star}
+                onClick={() => void setStarred(m.id, !starred)}
+                done={close}
+              >
+                {starred ? "Unstar" : "Star"}
+              </MenuItem>
+            )}
+            {canForward && (
+              <MenuItem
+                icon={Forward}
+                onClick={() => setForward(true)}
+                done={close}
+              >
+                Forward
+              </MenuItem>
+            )}
             <MenuItem icon={Info} onClick={() => setInfo(true)} done={close}>
               Message info
             </MenuItem>
@@ -346,6 +392,7 @@ function BubbleImpl({
       )}
 
       {info && <MessageInfo m={m} onClose={() => setInfo(false)} />}
+      {forward && <ForwardModal message={m} onClose={() => setForward(false)} />}
     </div>
   );
 }
