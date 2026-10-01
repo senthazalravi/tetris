@@ -1,5 +1,5 @@
 import type { Context, MiddlewareHandler } from "hono";
-import { SESSION_TTL_MS, VAULT_TOKEN_TTL_MS } from "@lop/config";
+import { SESSION_TTL_MS, VAULT_TOKEN_TTL_MS } from "@tetris/config";
 import type { DbSession, DbUser, Env } from "../env";
 import { randomId, randomToken, sha256Hex } from "./util";
 
@@ -9,8 +9,8 @@ export type AppEnv = {
 };
 export type AppContext = Context<AppEnv>;
 
-const COOKIE = "lop_session";
-export const VAULT_HEADER = "x-lop-vault";
+const COOKIE = "tetris_session";
+export const VAULT_HEADER = "x-tetris-vault";
 
 /* ------------------------------ cookies ------------------------------ */
 
@@ -23,21 +23,57 @@ export function setSessionCookie(c: AppContext, token: string) {
   c.header(
     "Set-Cookie",
     `${COOKIE}=${token}; ${cookieAttrs(c.env, Math.floor(SESSION_TTL_MS / 1000))}`,
+    { append: true },
   );
 }
 
 export function clearSessionCookie(c: AppContext) {
-  c.header("Set-Cookie", `${COOKIE}=; ${cookieAttrs(c.env, 0)}`);
+  c.header("Set-Cookie", `${COOKIE}=; ${cookieAttrs(c.env, 0)}`, { append: true });
 }
 
-export function readSessionToken(req: { header: (n: string) => string | undefined }) {
+function readCookie(req: { header: (n: string) => string | undefined }, wanted: string) {
   const header = req.header("cookie");
   if (!header) return null;
   for (const part of header.split(";")) {
     const [name, ...rest] = part.trim().split("=");
-    if (name === COOKIE) return rest.join("=");
+    if (name === wanted) return rest.join("=");
   }
   return null;
+}
+
+export function readSessionToken(req: { header: (n: string) => string | undefined }) {
+  return readCookie(req, COOKIE);
+}
+
+/* ---------------------------- trusted device ---------------------------- */
+
+const DEVICE_COOKIE = "tetris_device";
+const DEVICE_COOKIE_TTL_SEC = 400 * 24 * 60 * 60;
+
+/**
+ * Marks this browser as the one that last unlocked the account. Only a
+ * trusted browser can wipe an account by failing or abandoning an unlock, so a
+ * stranger who merely knows a username cannot destroy someone's chats.
+ */
+export async function trustThisDevice(c: AppContext, userId: string) {
+  const token = randomToken();
+  await c.env.DB.prepare(`UPDATE users SET trusted_device_hash = ? WHERE id = ?`)
+    .bind(await sha256Hex(token), userId)
+    .run();
+  c.header(
+    "Set-Cookie",
+    `${DEVICE_COOKIE}=${token}; ${cookieAttrs(c.env, DEVICE_COOKIE_TTL_SEC)}`,
+    { append: true },
+  );
+}
+
+export async function isTrustedDevice(
+  req: { header: (n: string) => string | undefined },
+  user: DbUser,
+) {
+  const token = readCookie(req, DEVICE_COOKIE);
+  if (!token || !user.trusted_device_hash) return false;
+  return (await sha256Hex(token)) === user.trusted_device_hash;
 }
 
 /* ------------------------------ sessions ----------------------------- */
@@ -161,7 +197,6 @@ export function publicUser(user: DbUser) {
     id: user.id,
     username: user.username,
     displayName: user.display_name,
-    email: user.email,
     avatarUrl: avatarUrl(user.id, user.avatar_version),
     communicationEpoch: user.communication_epoch,
   };

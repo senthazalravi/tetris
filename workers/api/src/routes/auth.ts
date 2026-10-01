@@ -1,13 +1,10 @@
 import { Hono } from "hono";
-import {
-  DISPLAY_NAME_MAX,
-  UNLOCK_WINDOW_MS,
-  USERNAME_PATTERN,
-} from "@lop/config";
+import { UNLOCK_WINDOW_MS, USERNAME_PATTERN } from "@tetris/config";
 import type { DbUser } from "../env";
 import {
   clearSessionCookie,
   createSession,
+  isTrustedDevice,
   issueVaultToken,
   loadSession,
   publicUser,
@@ -15,6 +12,7 @@ import {
   requireSession,
   requireUnlocked,
   setSessionCookie,
+  trustThisDevice,
   type AppEnv,
 } from "../lib/session";
 import {
@@ -22,7 +20,6 @@ import {
   clientIp,
   hmacHex,
   isBase64,
-  normalizeEmail,
   normalizeUsername,
   randomId,
   safeEqual,
@@ -31,11 +28,9 @@ import {
 import { clear, hit, peek } from "../lib/ratelimit";
 import { verifyTurnstile } from "../lib/turnstile";
 import { sweepUserChallenges } from "../services/challenges";
-import { deleteAccount, runCommunicationWipe } from "../services/wipe";
+import { runCommunicationWipe } from "../services/wipe";
 
 export const authRoutes = new Hono<AppEnv>();
-
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function validB64(value: unknown, bytes: number): value is string {
   if (!isBase64(value, bytes)) return false;
@@ -46,6 +41,8 @@ function validB64(value: unknown, bytes: number): value is string {
   }
 }
 
+const DEV_SECRET = "tetris-dev-secret";
+
 async function fakeSalt(secret: string, login: string): Promise<string> {
   const hex = (await hmacHex(secret, `salt:${login}`)).slice(0, 32);
   const bytes = new Uint8Array(16);
@@ -55,127 +52,41 @@ async function fakeSalt(secret: string, login: string): Promise<string> {
   return btoa(s);
 }
 
-async function findByLogin(db: D1Database, loginRaw: string) {
-  const login = loginRaw.includes("@")
-    ? normalizeEmail(loginRaw)
-    : normalizeUsername(loginRaw);
-  const user = await db
-    .prepare(`SELECT * FROM users WHERE email = ?1 OR username = ?1 LIMIT 1`)
-    .bind(login)
-    .first<DbUser>();
-  return { login, user };
+/**
+ * Unknown usernames, and accounts a stranger must not touch, get a fake
+ * challenge that fails like a wrong passcode and never wipes anything. That
+ * keeps usernames unenumerable and stops outsiders from wiping an account.
+ */
+const FAKE_PREFIX = "fake_";
+
+async function fakeChallenge(env: AppEnv["Bindings"], username: string) {
+  return {
+    id: FAKE_PREFIX + randomId("ulc"),
+    remainingMs: UNLOCK_WINDOW_MS,
+    vaultSalt: await fakeSalt(env.SESSION_SECRET ?? DEV_SECRET, `vault:${username}`),
+  };
 }
 
-/* ----------------------------- prelogin ------------------------------ */
+function isFake(id: unknown): boolean {
+  return typeof id === "string" && id.startsWith(FAKE_PREFIX);
+}
 
-authRoutes.post("/prelogin", async (c) => {
-  const ip = clientIp(c.req);
-  if (!(await hit(c.env, `prelogin:${ip}`, 40, 60_000))) {
-    return c.json({ error: "Too many requests" }, 429);
-  }
-  const body = await c.req.json<{ login?: string }>().catch(() => ({}) as { login?: string });
-  const loginRaw = (body.login ?? "").trim();
-  if (!loginRaw || loginRaw.length > 254) return c.json({ error: "Login required" }, 400);
-  const { login, user } = await findByLogin(c.env.DB, loginRaw);
-  // Unknown accounts get a stable fake salt so the endpoint doesn't reveal them.
-  const authSalt =
-    user?.auth_salt ?? (await fakeSalt(c.env.SESSION_SECRET ?? "lop-dev-secret", login));
-  return c.json({ authSalt });
-});
-
-/* ----------------------------- register ------------------------------ */
-
-authRoutes.post("/register", async (c) => {
-  const ip = clientIp(c.req);
-  if (!(await hit(c.env, `register:${ip}`, 8, 60 * 60_000))) {
-    return c.json({ error: "Too many sign-ups from this network. Try later." }, 429);
-  }
-  const body = await c.req
-    .json<{
-      email?: string;
-      username?: string;
-      displayName?: string;
-      authSalt?: string;
-      authProof?: string;
-      vaultSalt?: string;
-      vaultVerifier?: string;
-      turnstileToken?: string;
-    }>()
-    .catch(() => ({}) as Record<string, never>);
-
-  if (!(await verifyTurnstile(c.env, body.turnstileToken, ip))) {
-    return c.json({ error: "Verification failed. Please retry." }, 400);
-  }
-
-  const email = normalizeEmail(body.email ?? "");
-  const username = normalizeUsername(body.username ?? "");
-  const displayName = (body.displayName ?? "").trim();
-
-  if (!EMAIL_PATTERN.test(email) || email.length > 254) {
-    return c.json({ error: "Enter a valid email address" }, 400);
-  }
-  if (!USERNAME_PATTERN.test(username)) {
-    return c.json({ error: "Username: 3–32 characters, a–z, 0–9 and _ only" }, 400);
-  }
-  if (!displayName || displayName.length > DISPLAY_NAME_MAX) {
-    return c.json({ error: `Display name is required (max ${DISPLAY_NAME_MAX})` }, 400);
-  }
-  if (
-    !validB64(body.authSalt, 16) ||
-    !validB64(body.authProof, 32) ||
-    !validB64(body.vaultSalt, 16) ||
-    !validB64(body.vaultVerifier, 32)
-  ) {
-    return c.json({ error: "Malformed credentials" }, 400);
-  }
-
-  const existing = await c.env.DB.prepare(
-    `SELECT 1 AS x FROM users WHERE email = ? OR username = ? LIMIT 1`,
-  )
-    .bind(email, username)
-    .first();
-  if (existing) return c.json({ error: "Email or username already taken" }, 409);
-
-  const now = Date.now();
-  const userId = randomId("usr");
-  try {
-    await c.env.DB.prepare(
-      `INSERT INTO users (id, username, email, display_name, avatar_version, auth_salt, auth_hash,
-                          vault_salt, vault_verifier_hash, communication_epoch, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, 1, ?, ?)`,
-    )
-      .bind(
-        userId,
-        username,
-        email,
-        displayName,
-        body.authSalt,
-        await sha256Hex(body.authProof),
-        body.vaultSalt,
-        await sha256Hex(body.vaultVerifier),
-        now,
-        now,
-      )
-      .run();
-  } catch {
-    return c.json({ error: "Email or username already taken" }, 409);
-  }
-
-  const session = await createSession(c.env, userId);
-  const vaultToken = await issueVaultToken(c.env, session.id, userId);
-  setSessionCookie(c, session.token);
-  const user = await c.env.DB.prepare(`SELECT * FROM users WHERE id = ?`)
-    .bind(userId)
+async function findByUsername(db: D1Database, usernameRaw: string) {
+  const username = normalizeUsername(usernameRaw);
+  const user = await db
+    .prepare(`SELECT * FROM users WHERE username = ? LIMIT 1`)
+    .bind(username)
     .first<DbUser>();
-  return c.json({ user: publicUser(user!), vaultToken }, 201);
-});
+  return { username, user };
+}
 
-/* ------------------------------- login -------------------------------- */
+/* ------------------------------- start -------------------------------- */
 
 async function challengePayload(
   env: AppEnv["Bindings"],
   user: DbUser,
   sessionId: string,
+  wipeOnFail: boolean,
 ) {
   const now = Date.now();
   const live = await env.DB.prepare(
@@ -194,60 +105,55 @@ async function challengePayload(
   }
   const id = randomId("ulc");
   await env.DB.prepare(
-    `INSERT INTO unlock_challenges (id, user_id, session_id, started_at, expires_at, attempt_used, outcome, completed_at)
-     VALUES (?, ?, ?, ?, ?, 0, NULL, NULL)`,
+    `INSERT INTO unlock_challenges (id, user_id, session_id, started_at, expires_at, attempt_used, outcome, completed_at, wipe_on_fail)
+     VALUES (?, ?, ?, ?, ?, 0, NULL, NULL, ?)`,
   )
-    .bind(id, user.id, sessionId, now, now + UNLOCK_WINDOW_MS)
+    .bind(id, user.id, sessionId, now, now + UNLOCK_WINDOW_MS, wipeOnFail ? 1 : 0)
     .run();
   return { id, remainingMs: UNLOCK_WINDOW_MS, vaultSalt: user.vault_salt! };
 }
 
-authRoutes.post("/login", async (c) => {
+/**
+ * Step one of every sign-in: username only. Opens a session and the 30s
+ * challenge. Nothing is revealed about the account until the passcode proof
+ * is accepted by /unlock.
+ */
+authRoutes.post("/start", async (c) => {
   const ip = clientIp(c.req);
-  if (!(await hit(c.env, `login:${ip}`, 30, 60_000))) {
+  if (!(await hit(c.env, `start:${ip}`, 30, 60_000))) {
     return c.json({ error: "Too many attempts. Wait a minute." }, 429);
   }
   const body = await c.req
-    .json<{ login?: string; authProof?: string; turnstileToken?: string }>()
+    .json<{ username?: string; turnstileToken?: string }>()
     .catch(() => ({}) as Record<string, never>);
   if (!(await verifyTurnstile(c.env, body.turnstileToken, ip))) {
     return c.json({ error: "Verification failed. Please retry." }, 400);
   }
-  const loginRaw = (body.login ?? "").trim();
-  if (!loginRaw || !validB64(body.authProof, 32)) {
-    return c.json({ error: "Login and password are required" }, 400);
+  const { username, user } = await findByUsername(c.env.DB, body.username ?? "");
+  if (!USERNAME_PATTERN.test(username)) {
+    return c.json({ error: "Enter your username" }, 400);
+  }
+  if (!user) return c.json({ challenge: await fakeChallenge(c.env, username) });
+
+  const trusted = await isTrustedDevice(c.req, user);
+  if (!(await peek(c.env, `unlockfail:${user.id}`, 8, 15 * 60_000))) {
+    return c.json({ error: "Too many wrong attempts. Try again in 15 minutes." }, 429);
   }
 
-  const { login, user } = await findByLogin(c.env.DB, loginRaw);
-  const failKey = `loginfail:${user?.id ?? login}`;
-  if (!(await peek(c.env, failKey, 8, 15 * 60_000))) {
-    return c.json({ error: "Account temporarily locked. Try again in 15 minutes." }, 429);
-  }
-  const ok =
-    user !== null &&
-    safeEqual(await sha256Hex(body.authProof), user.auth_hash);
-  if (!user || !ok) {
-    await hit(c.env, failKey, 8, 15 * 60_000);
-    return c.json({ error: "Invalid credentials" }, 401);
-  }
-  await clear(c.env, failKey);
-
-  // An abandoned earlier challenge means the wipe is already due.
+  // An abandoned earlier challenge on a trusted browser means the wipe is due.
   await sweepUserChallenges(c.env, user.id);
   const fresh = (await c.env.DB.prepare(`SELECT * FROM users WHERE id = ?`)
     .bind(user.id)
     .first<DbUser>())!;
 
+  if (!fresh.vault_verifier_hash) {
+    // Expired passcode: the only way back is the email-confirmed reset.
+    return c.json({ expired: true });
+  }
+
   const session = await createSession(c.env, fresh.id);
   setSessionCookie(c, session.token);
-
-  if (!fresh.vault_verifier_hash) {
-    return c.json({ user: publicUser(fresh), vaultSetupRequired: true });
-  }
-  return c.json({
-    user: publicUser(fresh),
-    challenge: await challengePayload(c.env, fresh, session.id),
-  });
+  return c.json({ challenge: await challengePayload(c.env, fresh, session.id, trusted) });
 });
 
 /* ------------------------------- resume -------------------------------- */
@@ -267,11 +173,16 @@ authRoutes.post("/resume", async (c) => {
     .first<DbUser>())!;
 
   if (!user.vault_verifier_hash) {
-    return c.json({ user: publicUser(user), vaultSetupRequired: true });
+    return c.json({ user: publicUser(user), expired: true });
   }
   return c.json({
     user: publicUser(user),
-    challenge: await challengePayload(c.env, user, loaded.session.id),
+    challenge: await challengePayload(
+      c.env,
+      user,
+      loaded.session.id,
+      await isTrustedDevice(c.req, user),
+    ),
   });
 });
 
@@ -285,6 +196,15 @@ const DERIVE_GRACE_MS = 15_000;
  * turn a correct passcode into a timeout. The verifier must follow within a
  * short, bounded grace period.
  */
+authRoutes.post("/unlock/begin", async (c, next) => {
+  const body = await c.req.raw
+    .clone()
+    .json<{ challengeId?: string }>()
+    .catch(() => ({}) as { challengeId?: string });
+  if (!isFake(body.challengeId)) return next();
+  return c.json({ ok: true, graceMs: DERIVE_GRACE_MS });
+});
+
 authRoutes.post("/unlock/begin", requireSession, async (c) => {
   const user = c.get("user");
   const session = c.get("session");
@@ -292,11 +212,11 @@ authRoutes.post("/unlock/begin", requireSession, async (c) => {
     .json<{ challengeId?: string }>()
     .catch(() => ({}) as { challengeId?: string });
   const challenge = await c.env.DB.prepare(
-    `SELECT id, expires_at, outcome FROM unlock_challenges
+    `SELECT id, expires_at, outcome, wipe_on_fail FROM unlock_challenges
      WHERE id = ? AND user_id = ? AND session_id = ?`,
   )
     .bind(body.challengeId ?? "", user.id, session.id)
-    .first<{ id: string; expires_at: number; outcome: string | null }>();
+    .first<{ id: string; expires_at: number; outcome: string | null; wipe_on_fail: number }>();
   if (!challenge) return c.json({ error: "Challenge not found" }, 404);
   if (challenge.outcome) return c.json({ error: "This challenge was already answered" }, 409);
 
@@ -309,8 +229,11 @@ authRoutes.post("/unlock/begin", requireSession, async (c) => {
       .bind(now, challenge.id)
       .run();
     if (!res.meta.changes) return c.json({ error: "This challenge was already answered" }, 409);
+    if (!challenge.wipe_on_fail) {
+      return c.json({ ok: false, wiped: false, reason: "TIMEOUT" });
+    }
     await runCommunicationWipe(c.env, user.id, "TIMEOUT");
-    return c.json({ ok: false, wiped: true, reason: "TIMEOUT", vaultSetupRequired: true });
+    return c.json({ ok: false, wiped: true, reason: "TIMEOUT", userId: user.id, vaultSetupRequired: true });
   }
 
   const claim = await c.env.DB.prepare(
@@ -322,6 +245,22 @@ authRoutes.post("/unlock/begin", requireSession, async (c) => {
     .run();
   if (!claim.meta.changes) return c.json({ error: "This challenge was already answered" }, 409);
   return c.json({ ok: true, graceMs: DERIVE_GRACE_MS });
+});
+
+authRoutes.post("/unlock", async (c, next) => {
+  const body = await c.req.raw
+    .clone()
+    .json<{ challengeId?: string; verifier?: string | null }>()
+    .catch(() => ({}) as { challengeId?: string; verifier?: string | null });
+  if (!isFake(body.challengeId)) return next();
+  if (!(await hit(c.env, `fakeunlock:${clientIp(c.req)}`, 20, 60_000))) {
+    return c.json({ error: "Too many attempts" }, 429);
+  }
+  return c.json({
+    unlocked: false,
+    wiped: false,
+    reason: typeof body.verifier === "string" ? "WRONG_PASSCODE" : "TIMEOUT",
+  });
 });
 
 authRoutes.post("/unlock", requireSession, async (c) => {
@@ -336,11 +275,17 @@ authRoutes.post("/unlock", requireSession, async (c) => {
   const challengeId = body.challengeId ?? "";
 
   const challenge = await c.env.DB.prepare(
-    `SELECT id, expires_at, attempt_used, outcome FROM unlock_challenges
+    `SELECT id, expires_at, attempt_used, outcome, wipe_on_fail FROM unlock_challenges
      WHERE id = ? AND user_id = ? AND session_id = ?`,
   )
     .bind(challengeId, user.id, session.id)
-    .first<{ id: string; expires_at: number; attempt_used: number; outcome: string | null }>();
+    .first<{
+      id: string;
+      expires_at: number;
+      attempt_used: number;
+      outcome: string | null;
+      wipe_on_fail: number;
+    }>();
   if (!challenge) return c.json({ error: "Challenge not found" }, 404);
   if (challenge.outcome) {
     return c.json({ error: "This challenge was already answered" }, 409);
@@ -372,8 +317,11 @@ authRoutes.post("/unlock", requireSession, async (c) => {
     if (!(await settle("TIMEOUT"))) {
       return c.json({ error: "This challenge was already answered" }, 409);
     }
+    if (!challenge.wipe_on_fail) {
+      return c.json({ unlocked: false, wiped: false, reason: "TIMEOUT" });
+    }
     await runCommunicationWipe(c.env, user.id, "TIMEOUT");
-    return c.json({ unlocked: false, wiped: true, reason: "TIMEOUT", vaultSetupRequired: true });
+    return c.json({ unlocked: false, wiped: true, reason: "TIMEOUT", userId: user.id, vaultSetupRequired: true });
   }
 
   // First submission claims the single attempt (unless /unlock/begin already did).
@@ -396,11 +344,17 @@ authRoutes.post("/unlock", requireSession, async (c) => {
     if (!(await settle("WRONG"))) {
       return c.json({ error: "This challenge was already answered" }, 409);
     }
+    if (!challenge.wipe_on_fail) {
+      // A browser that is not this account's own: count it, never wipe.
+      await hit(c.env, `unlockfail:${user.id}`, 8, 15 * 60_000);
+      return c.json({ unlocked: false, wiped: false, reason: "WRONG_PASSCODE" });
+    }
     await runCommunicationWipe(c.env, user.id, "WRONG_PASSCODE");
     return c.json({
       unlocked: false,
       wiped: true,
       reason: "WRONG_PASSCODE",
+      userId: user.id,
       vaultSetupRequired: true,
     });
   }
@@ -409,6 +363,8 @@ authRoutes.post("/unlock", requireSession, async (c) => {
     return c.json({ error: "This challenge was already answered" }, 409);
   }
   const vaultToken = await issueVaultToken(c.env, session.id, user.id);
+  await clear(c.env, `unlockfail:${user.id}`);
+  await trustThisDevice(c, user.id);
   return c.json({
     unlocked: true,
     wiped: false,
@@ -417,203 +373,76 @@ authRoutes.post("/unlock", requireSession, async (c) => {
   });
 });
 
-/* ----------------------------- vault setup ------------------------------ */
-
-/** After a wipe (or never set): choose the vault passcode for the new epoch. */
-authRoutes.post("/vault", requireSession, async (c) => {
-  const user = c.get("user");
-  const session = c.get("session");
-  if (user.vault_verifier_hash) {
-    return c.json({ error: "Vault already configured" }, 409);
-  }
-  const body = await c.req
-    .json<{ vaultSalt?: string; vaultVerifier?: string }>()
-    .catch(() => ({}) as Record<string, never>);
-  if (!validB64(body.vaultSalt, 16) || !validB64(body.vaultVerifier, 32)) {
-    return c.json({ error: "Malformed vault credentials" }, 400);
-  }
-  const res = await c.env.DB.prepare(
-    `UPDATE users SET vault_salt = ?, vault_verifier_hash = ?, updated_at = ?
-     WHERE id = ? AND vault_verifier_hash IS NULL`,
-  )
-    .bind(body.vaultSalt, await sha256Hex(body.vaultVerifier), Date.now(), user.id)
-    .run();
-  if (!res.meta.changes) return c.json({ error: "Vault already configured" }, 409);
-
-  const vaultToken = await issueVaultToken(c.env, session.id, user.id);
-  const fresh = (await c.env.DB.prepare(`SELECT * FROM users WHERE id = ?`)
-    .bind(user.id)
-    .first<DbUser>())!;
-  return c.json({ vaultToken, user: publicUser(fresh) }, 201);
-});
-
-/* ------------------- forgot account password (no email) ------------------- */
+/* ------------------------------- reset -------------------------------- */
 
 /**
- * Two recovery paths, both without sending mail:
- *  1. Vault still active → email + @username + vault passcode
- *  2. Vault wiped / never set → email + @username (chats already gone)
- * Wrong vault here does NOT wipe. Unknown emails get a fake vault salt and
- * `requiresVault: true` so we don't advertise which addresses exist.
+ * Passcode expired (wrong or late unlock wiped the vault). The user proves
+ * ownership with the email on file, then chooses a new 8-digit passcode. Only
+ * valid while the vault is actually unset, so a live passcode can never be
+ * replaced this way.
  */
-authRoutes.post("/password-reset/preflight", async (c) => {
+authRoutes.post("/reset", async (c) => {
   const ip = clientIp(c.req);
-  if (!(await hit(c.env, `pwresetpre:${ip}`, 30, 60_000))) {
-    return c.json({ error: "Too many requests" }, 429);
-  }
-  const body = await c.req.json<{ email?: string }>().catch(() => ({}) as { email?: string });
-  const email = normalizeEmail(body.email ?? "");
-  if (!EMAIL_PATTERN.test(email) || email.length > 254) {
-    return c.json({ error: "Enter a valid email address" }, 400);
-  }
-  const user = await c.env.DB.prepare(`SELECT * FROM users WHERE email = ? LIMIT 1`)
-    .bind(email)
-    .first<DbUser>();
-  const secret = c.env.SESSION_SECRET ?? "lop-dev-secret";
-  if (!user) {
-    return c.json({
-      vaultSalt: await fakeSalt(secret, `vault:${email}`),
-      requiresVault: true,
-    });
-  }
-  if (user.vault_salt && user.vault_verifier_hash) {
-    return c.json({ vaultSalt: user.vault_salt, requiresVault: true });
-  }
-  return c.json({
-    vaultSalt: await fakeSalt(secret, `vault:${email}`),
-    requiresVault: false,
-  });
-});
-
-authRoutes.post("/password-reset", async (c) => {
-  const ip = clientIp(c.req);
-  if (!(await hit(c.env, `pwreset:${ip}`, 15, 60_000))) {
-    return c.json({ error: "Too many attempts. Wait a minute." }, 429);
+  if (!(await hit(c.env, `reset:${ip}`, 10, 60 * 60_000))) {
+    return c.json({ error: "Too many attempts. Try again later." }, 429);
   }
   const body = await c.req
     .json<{
-      email?: string;
       username?: string;
-      vaultVerifier?: string | null;
-      authSalt?: string;
-      authProof?: string;
+      email?: string;
+      vaultSalt?: string;
+      vaultVerifier?: string;
       turnstileToken?: string;
     }>()
     .catch(() => ({}) as Record<string, never>);
   if (!(await verifyTurnstile(c.env, body.turnstileToken, ip))) {
     return c.json({ error: "Verification failed. Please retry." }, 400);
   }
-
-  const email = normalizeEmail(body.email ?? "");
-  const username = normalizeUsername(body.username ?? "");
-  if (!EMAIL_PATTERN.test(email) || email.length > 254) {
-    return c.json({ error: "Enter a valid email address" }, 400);
-  }
-  if (!USERNAME_PATTERN.test(username)) {
-    return c.json({ error: "Enter your @username exactly" }, 400);
-  }
-  if (!validB64(body.authSalt, 16) || !validB64(body.authProof, 32)) {
+  if (!validB64(body.vaultSalt, 16) || !validB64(body.vaultVerifier, 32)) {
     return c.json({ error: "Malformed credentials" }, 400);
   }
-
-  const failKey = `pwresetfail:${email}`;
-  if (!(await peek(c.env, failKey, 8, 15 * 60_000))) {
-    return c.json({ error: "Too many failed attempts. Try again in 15 minutes." }, 429);
+  const { user } = await findByUsername(c.env.DB, body.username ?? "");
+  const failKey = `resetfail:${user?.id ?? ip}`;
+  if (!(await peek(c.env, failKey, 5, 15 * 60_000))) {
+    return c.json({ error: "Too many attempts. Try again in 15 minutes." }, 429);
+  }
+  const email = (body.email ?? "").trim().toLowerCase();
+  const ok =
+    user !== null &&
+    email.length > 0 &&
+    !!user.email &&
+    user.vault_verifier_hash === null &&
+    safeEqual(email, user.email.toLowerCase());
+  if (!user || !ok) {
+    await hit(c.env, failKey, 5, 15 * 60_000);
+    return c.json({ error: "That username and email do not match an expired passcode." }, 403);
   }
 
-  const user = await c.env.DB.prepare(`SELECT * FROM users WHERE email = ? LIMIT 1`)
-    .bind(email)
-    .first<DbUser>();
-
-  const deny = async () => {
-    await hit(c.env, failKey, 8, 15 * 60_000);
-    return c.json(
-      {
-        error:
-          "Could not verify that account. Check email, @username, and vault passcode (if your vault is still active).",
-      },
-      401,
-    );
-  };
-
-  if (!user || user.username !== username) return deny();
-
-  const vaultActive = Boolean(user.vault_salt && user.vault_verifier_hash);
-  if (vaultActive) {
-    if (!validB64(body.vaultVerifier, 32)) {
-      return c.json(
-        {
-          error:
-            "This account still has an active vault. Enter your vault passcode (not your account password) to continue.",
-        },
-        400,
-      );
-    }
-    const vaultOk = safeEqual(
-      await sha256Hex(body.vaultVerifier),
-      user.vault_verifier_hash!,
-    );
-    if (!vaultOk) return deny();
-  }
-
+  const res = await c.env.DB.prepare(
+    `UPDATE users SET vault_salt = ?, vault_verifier_hash = ?, updated_at = ?
+     WHERE id = ? AND vault_verifier_hash IS NULL`,
+  )
+    .bind(body.vaultSalt, await sha256Hex(body.vaultVerifier), Date.now(), user.id)
+    .run();
+  if (!res.meta.changes) return c.json({ error: "Passcode is not expired." }, 409);
   await clear(c.env, failKey);
 
-  const now = Date.now();
-  await c.env.DB.batch([
-    c.env.DB.prepare(
-      `UPDATE users SET auth_salt = ?, auth_hash = ?, updated_at = ? WHERE id = ?`,
-    ).bind(body.authSalt, await sha256Hex(body.authProof), now, user.id),
-    c.env.DB.prepare(
-      `UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL`,
-    ).bind(now, user.id),
-    c.env.DB.prepare(`DELETE FROM unlocks WHERE user_id = ?`).bind(user.id),
-  ]);
-
-  return c.json({
-    ok: true,
-    message: vaultActive
-      ? "Account password updated. Sign in with the new password. Your vault passcode is unchanged."
-      : "Account password updated. Sign in, then set up a new vault passcode.",
-  });
+  const session = await createSession(c.env, user.id);
+  const vaultToken = await issueVaultToken(c.env, session.id, user.id);
+  setSessionCookie(c, session.token);
+  await trustThisDevice(c, user.id);
+  const fresh = (await c.env.DB.prepare(`SELECT * FROM users WHERE id = ?`)
+    .bind(user.id)
+    .first<DbUser>())!;
+  return c.json({ user: publicUser(fresh), vaultToken }, 201);
 });
 
-/* ---------------- change password / vault / delete (unlocked) ------------- */
+/* --------------------------- change passcode (unlocked) --------------------------- */
 
 authRoutes.get("/vault-salt", requireUnlocked, (c) => {
   const user = c.get("user");
   if (!user.vault_salt) return c.json({ error: "Vault is not set up" }, 400);
   return c.json({ vaultSalt: user.vault_salt });
-});
-
-authRoutes.post("/change-password", requireUnlocked, async (c) => {
-  const user = c.get("user");
-  const ip = clientIp(c.req);
-  if (!(await hit(c.env, `chpw:${user.id}`, 10, 60 * 60_000))) {
-    return c.json({ error: "Too many password changes. Try later." }, 429);
-  }
-  const body = await c.req
-    .json<{ oldAuthProof?: string; authSalt?: string; authProof?: string }>()
-    .catch(() => ({}) as Record<string, never>);
-  if (
-    !validB64(body.oldAuthProof, 32) ||
-    !validB64(body.authSalt, 16) ||
-    !validB64(body.authProof, 32)
-  ) {
-    return c.json({ error: "Malformed credentials" }, 400);
-  }
-  if (!safeEqual(await sha256Hex(body.oldAuthProof), user.auth_hash)) {
-    return c.json({ error: "Current password is incorrect" }, 401);
-  }
-  const now = Date.now();
-  await c.env.DB.batch([
-    c.env.DB.prepare(
-      `UPDATE users SET auth_salt = ?, auth_hash = ?, updated_at = ? WHERE id = ?`,
-    ).bind(body.authSalt, await sha256Hex(body.authProof), now, user.id),
-    c.env.DB.prepare(
-      `UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL AND id != ?`,
-    ).bind(now, user.id, c.get("session").id),
-  ]);
-  return c.json({ ok: true });
 });
 
 authRoutes.post("/change-vault", requireUnlocked, async (c) => {
@@ -647,26 +476,6 @@ authRoutes.post("/change-vault", requireUnlocked, async (c) => {
   )
     .bind(body.vaultSalt, await sha256Hex(body.vaultVerifier), Date.now(), user.id)
     .run();
-  return c.json({ ok: true });
-});
-
-authRoutes.post("/delete-account", requireUnlocked, async (c) => {
-  const user = c.get("user");
-  const ip = clientIp(c.req);
-  if (!(await hit(c.env, `delacc:${ip}`, 5, 60 * 60_000))) {
-    return c.json({ error: "Too many attempts. Try later." }, 429);
-  }
-  const body = await c.req
-    .json<{ authProof?: string }>()
-    .catch(() => ({}) as Record<string, never>);
-  if (!validB64(body.authProof, 32)) {
-    return c.json({ error: "Confirm with your account password" }, 400);
-  }
-  if (!safeEqual(await sha256Hex(body.authProof), user.auth_hash)) {
-    return c.json({ error: "Password is incorrect" }, 401);
-  }
-  await deleteAccount(c.env, user.id);
-  clearSessionCookie(c);
   return c.json({ ok: true });
 });
 

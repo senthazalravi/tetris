@@ -13,8 +13,9 @@ export const PENDING_ATTACHMENT_TTL_MS = 60 * 60 * 1000;
 /** Username: 3–32 chars, lowercase alphanumeric + underscore. */
 export const USERNAME_PATTERN = /^[a-z0-9_]{3,32}$/;
 
-export const PASSWORD_MIN_LENGTH = 12;
-export const PASSCODE_MIN_LENGTH = 4;
+/** The passcode is the only secret: exactly 8 digits. */
+export const PASSCODE_LENGTH = 8;
+export const PASSCODE_PATTERN = /^\d{8}$/;
 export const DISPLAY_NAME_MAX = 40;
 
 export const MAX_CIPHERTEXT_BYTES = 64 * 1024;

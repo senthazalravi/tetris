@@ -18,13 +18,12 @@ export interface Env {
 export interface DbUser {
   id: string;
   username: string;
-  email: string;
+  email: string | null;
   display_name: string;
   avatar_version: number;
-  auth_salt: string;
-  auth_hash: string;
   vault_salt: string | null;
   vault_verifier_hash: string | null;
+  trusted_device_hash: string | null;
   communication_epoch: number;
   created_at: number;
   updated_at: number;

@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import {
   createDeviceKeys,
   decryptBlob,
-  deriveAuthProof,
   deriveVaultSecrets,
   deserializeDeviceKeys,
   encryptBlob,
@@ -197,18 +196,14 @@ test("file encryption round trip + wrong key fails", async () => {
   await assert.rejects(decryptBlob(ciphertext, other.key));
 });
 
-test("password + passcode derivation is deterministic and separated", async () => {
+test("passcode derivation is deterministic and the key and verifier are separated", async () => {
   const salt = generateSaltB64();
-  const p1 = await deriveAuthProof("correct horse battery", salt);
-  const p2 = await deriveAuthProof("correct horse battery", salt);
-  assert.equal(p1, p2);
-  assert.notEqual(p1, await deriveAuthProof("correct horse batterz", salt));
-
-  const v1 = await deriveVaultSecrets("4821", salt);
-  const v2 = await deriveVaultSecrets("4821", salt);
+  const v1 = await deriveVaultSecrets("48210937", salt);
+  const v2 = await deriveVaultSecrets("48210937", salt);
   assert.equal(v1.verifier, v2.verifier);
-  assert.notEqual(v1.verifier, (await deriveVaultSecrets("4822", salt)).verifier);
-  assert.notEqual(v1.verifier, p1, "verifier is independent of auth proof");
+  assert.deepEqual(v1.vaultKey, v2.vaultKey);
+  assert.notEqual(v1.verifier, (await deriveVaultSecrets("48210938", salt)).verifier);
+  assert.notEqual(v1.verifier, (await deriveVaultSecrets("48210937", generateSaltB64())).verifier);
 });
 
 test("safety numbers are symmetric", () => {

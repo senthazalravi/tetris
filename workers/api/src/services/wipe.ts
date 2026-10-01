@@ -1,11 +1,11 @@
-import type { WipeReason } from "@lop/types";
+import type { WipeReason } from "@tetris/types";
 import type { Env } from "../env";
 import { pushToUser } from "../lib/push";
 import { randomId } from "../lib/util";
 
 /**
  * Communication wipe: contacts, conversation membership and the inbox go away,
- * the account (profile, password, username) stays. The vault is left unset so
+ * the account (profile, username) stays. The vault is left unset so
  * the next screen forces a fresh passcode + fresh device keys for the new epoch.
  *
  * Idempotent: the epoch compare-and-swap makes concurrent calls a no-op.

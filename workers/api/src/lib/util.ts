@@ -66,12 +66,12 @@ export function isBase64(s: unknown, maxBytes: number): s is string {
   return /^[A-Za-z0-9+/]+={0,2}$/.test(s);
 }
 
-export function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase();
-}
-
 export function normalizeUsername(username: string): string {
   return username.trim().toLowerCase().replace(/^@/, "");
+}
+
+export function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
 }
 
 export function clientIp(req: { header: (n: string) => string | undefined }): string {

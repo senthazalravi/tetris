@@ -20,14 +20,14 @@ async function claimTimeout(env: Env, challengeId: string, now: number) {
 export async function sweepUserChallenges(env: Env, userId: string): Promise<boolean> {
   const now = Date.now();
   const stale = await env.DB.prepare(
-    `SELECT id FROM unlock_challenges
+    `SELECT id, wipe_on_fail FROM unlock_challenges
      WHERE user_id = ? AND outcome IS NULL AND expires_at <= ?`,
   )
     .bind(userId, now)
-    .all<{ id: string }>();
+    .all<{ id: string; wipe_on_fail: number }>();
   let wiped = false;
   for (const row of stale.results ?? []) {
-    if (await claimTimeout(env, row.id, now)) {
+    if (await claimTimeout(env, row.id, now) && row.wipe_on_fail) {
       await runCommunicationWipe(env, userId, "TIMEOUT");
       wiped = true;
     }
@@ -39,14 +39,14 @@ export async function sweepUserChallenges(env: Env, userId: string): Promise<boo
 export async function sweepAllChallenges(env: Env, limit = 50): Promise<number> {
   const now = Date.now();
   const stale = await env.DB.prepare(
-    `SELECT id, user_id FROM unlock_challenges
+    `SELECT id, user_id, wipe_on_fail FROM unlock_challenges
      WHERE outcome IS NULL AND expires_at <= ? LIMIT ?`,
   )
     .bind(now, limit)
-    .all<{ id: string; user_id: string }>();
+    .all<{ id: string; user_id: string; wipe_on_fail: number }>();
   let wiped = 0;
   for (const row of stale.results ?? []) {
-    if (await claimTimeout(env, row.id, now)) {
+    if ((await claimTimeout(env, row.id, now)) && row.wipe_on_fail) {
       await runCommunicationWipe(env, row.user_id, "TIMEOUT");
       wiped += 1;
     }

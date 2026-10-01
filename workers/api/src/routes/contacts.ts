@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { ContactDto } from "@lop/types";
+import type { ContactDto } from "@tetris/types";
 import { avatarUrl, requireUnlocked, type AppEnv } from "../lib/session";
 import { hit } from "../lib/ratelimit";
 
@@ -70,22 +70,4 @@ contactRoutes.delete("/contacts/:userId", requireUnlocked, async (c) => {
     .bind(me.id, c.req.param("userId"))
     .run();
   return c.json({ ok: true });
-});
-
-contactRoutes.post("/contacts/:userId/block", requireUnlocked, async (c) => {
-  const me = c.get("user");
-  const target = c.req.param("userId");
-  if (target === me.id) return c.json({ error: "Invalid target" }, 400);
-  const body = await c.req
-    .json<{ blocked?: boolean }>()
-    .catch(() => ({}) as { blocked?: boolean });
-  const blocked = body.blocked === false ? 0 : 1;
-  await c.env.DB.prepare(
-    `INSERT INTO contacts (owner_user_id, contact_user_id, created_at, blocked)
-     VALUES (?1, ?2, ?3, ?4)
-     ON CONFLICT(owner_user_id, contact_user_id) DO UPDATE SET blocked = ?4`,
-  )
-    .bind(me.id, target, Date.now(), blocked)
-    .run();
-  return c.json({ ok: true, blocked: blocked === 1 });
 });

@@ -15,23 +15,11 @@ import {
 } from "./primitives";
 
 /* ------------------------------------------------------------------ */
-/* Password + vault passcode derivation                                */
+/* Vault passcode derivation                                */
 /* ------------------------------------------------------------------ */
 
 export function generateSaltB64(): string {
   return toBase64(randomBytes(16));
-}
-
-/**
- * The account password never leaves the browser. The server receives (and
- * stores a hash of) this derived proof instead.
- */
-export async function deriveAuthProof(
-  password: string,
-  authSaltB64: string,
-): Promise<string> {
-  const master = await stretchSecret(password, fromBase64(authSaltB64));
-  return toBase64(hkdf32(master, new Uint8Array(32), "lop/auth-proof/v1"));
 }
 
 export interface VaultSecrets {
@@ -48,8 +36,8 @@ export async function deriveVaultSecrets(
   const master = await stretchSecret(passcode, fromBase64(vaultSaltB64));
   const zero = new Uint8Array(32);
   return {
-    vaultKey: hkdf32(master, zero, "lop/vault-key/v1"),
-    verifier: toBase64(hkdf32(master, zero, "lop/vault-verifier/v1")),
+    vaultKey: hkdf32(master, zero, "tetris/vault-key/v1"),
+    verifier: toBase64(hkdf32(master, zero, "tetris/vault-verifier/v1")),
   };
 }
 
@@ -70,7 +58,7 @@ export interface DeviceKeys {
   nextPrekeyId: number;
 }
 
-const SPK_DOMAIN = utf8ToBytes("lop/spk/v1");
+const SPK_DOMAIN = utf8ToBytes("tetris/spk/v1");
 
 export function signedPrekeyMessage(spkPublic: Uint8Array): Uint8Array {
   return concatBytes(SPK_DOMAIN, spkPublic);
@@ -201,7 +189,7 @@ export function deserializeDeviceKeys(s: SerializedDeviceKeys): DeviceKeys {
 /* ------------------------------------------------------------------ */
 
 function half(identityKey: Uint8Array, signingKey: Uint8Array): Uint8Array {
-  return sha256(concatBytes(utf8ToBytes("lop/safety/v1"), identityKey, signingKey));
+  return sha256(concatBytes(utf8ToBytes("tetris/safety/v1"), identityKey, signingKey));
 }
 
 /** Symmetric 60-digit number both parties see; a mismatch reveals a MITM. */

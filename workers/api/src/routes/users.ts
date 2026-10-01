@@ -2,8 +2,7 @@ import { Hono } from "hono";
 import {
   DISPLAY_NAME_MAX,
   MAX_AVATAR_BYTES,
-  USERNAME_PATTERN,
-} from "@lop/config";
+} from "@tetris/config";
 import type { DbUser } from "../env";
 import {
   avatarUrl,
@@ -95,27 +94,34 @@ userRoutes.get("/users/:id/avatar", requireSession, async (c) => {
   });
 });
 
-/** Exact, case-insensitive username match. There is deliberately no search. */
-userRoutes.get("/users/lookup", requireUnlocked, async (c) => {
+/**
+ * Type-ahead over the predefined users: usernames that start with the query
+ * first, then ones that merely contain it. Never returns the caller.
+ */
+userRoutes.get("/users/search", requireUnlocked, async (c) => {
   const me = c.get("user");
-  if (!(await hit(c.env, `lookup:${me.id}`, 30, 60_000))) {
-    return c.json({ error: "Too many lookups. Slow down." }, 429);
+  if (!(await hit(c.env, `search:${me.id}`, 120, 60_000))) {
+    return c.json({ error: "Too many searches. Slow down." }, 429);
   }
-  const username = normalizeUsername(c.req.query("username") ?? "");
-  if (!USERNAME_PATTERN.test(username)) {
-    return c.json({ error: "Enter a full username (3–32 letters, numbers or _)" }, 400);
-  }
-  const u = await c.env.DB.prepare(
-    `SELECT id, username, display_name, avatar_version FROM users WHERE username = ?`,
+  const q = normalizeUsername(c.req.query("q") ?? "")
+    .replace(/[^a-z0-9_]/g, "")
+    .slice(0, 32);
+  if (!q) return c.json({ users: [] });
+  const escaped = q.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+  const rows = await c.env.DB.prepare(
+    `SELECT id, username, display_name, avatar_version FROM users
+     WHERE id != ?1 AND username LIKE ?2 ESCAPE '\\'
+     ORDER BY (username LIKE ?3 ESCAPE '\\') DESC, username
+     LIMIT 8`,
   )
-    .bind(username)
-    .first<{ id: string; username: string; display_name: string; avatar_version: number }>();
-  if (!u) return c.json({ error: "No user with that username" }, 404);
+    .bind(me.id, `%${escaped}%`, `${escaped}%`)
+    .all<{ id: string; username: string; display_name: string; avatar_version: number }>();
   return c.json({
-    userId: u.id,
-    username: u.username,
-    displayName: u.display_name,
-    avatarUrl: avatarUrl(u.id, u.avatar_version),
-    isSelf: u.id === me.id,
+    users: (rows.results ?? []).map((u) => ({
+      userId: u.id,
+      username: u.username,
+      displayName: u.display_name,
+      avatarUrl: avatarUrl(u.id, u.avatar_version),
+    })),
   });
 });
