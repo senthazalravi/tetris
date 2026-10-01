@@ -69,6 +69,8 @@ export interface MessageEnvelope {
   poll?: PollRef;
   vote?: VoteRef;
   edit?: EditRef;
+  /** True when this message was forwarded from another chat. */
+  forwarded?: boolean;
 }
 
 export function encodeEnvelope(e: MessageEnvelope): Uint8Array {
@@ -124,6 +126,9 @@ export function decodeEnvelope(bytes: Uint8Array): MessageEnvelope {
     ) {
       throw new Error("Malformed edit");
     }
+  }
+  if (parsed.forwarded !== undefined && typeof parsed.forwarded !== "boolean") {
+    throw new Error("Malformed forward flag");
   }
   return parsed;
 }

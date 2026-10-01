@@ -80,6 +80,14 @@ interface ChatState {
   editing: Record<string, LocalMessage | null>;
   /** Private, device-local nicknames: peer userId → name. Never sent anywhere. */
   nicknames: Record<string, string>;
+  /** Device-local: conversation id → true when muted. */
+  muted: Record<string, boolean>;
+  /** Device-local: conversation id → pinned-at ms. */
+  pinned: Record<string, number>;
+  /** Device-local: conversation id → unsent draft text. */
+  drafts: Record<string, string>;
+  /** Device-local: message id → true when starred. */
+  starred: Record<string, boolean>;
   toast: string | null;
 }
 
@@ -94,6 +102,10 @@ export const useChat = create<ChatState>(() => ({
   replyTo: {},
   editing: {},
   nicknames: {},
+  muted: {},
+  pinned: {},
+  drafts: {},
+  starred: {},
   toast: null,
 }));
 
@@ -214,7 +226,20 @@ export async function startEngine() {
     (grouped[m.convId] ??= []).push(m);
   }
   const nicknames = (await db.getKv<Record<string, string>>("nicknames")) ?? {};
-  set({ messages: grouped, nicknames, ready: false, connection: "connecting" });
+  const muted = (await db.getKv<Record<string, boolean>>("muted")) ?? {};
+  const pinned = (await db.getKv<Record<string, number>>("pinned")) ?? {};
+  const drafts = (await db.getKv<Record<string, string>>("drafts")) ?? {};
+  const starred = (await db.getKv<Record<string, boolean>>("starred")) ?? {};
+  set({
+    messages: grouped,
+    nicknames,
+    muted,
+    pinned,
+    drafts,
+    starred,
+    ready: false,
+    connection: "connecting",
+  });
 
   await refreshConversations();
   await refreshContacts();
@@ -258,6 +283,10 @@ export function stopEngine() {
     replyTo: {},
     editing: {},
     nicknames: {},
+    muted: {},
+    pinned: {},
+    drafts: {},
+    starred: {},
     toast: null,
   });
 }
@@ -513,10 +542,11 @@ async function syncPass() {
     await acknowledge(newIncoming);
     const audible = newIncoming.some(
       (m) =>
-        m.content.kind === "text" ||
-        m.content.kind === "file" ||
-        m.content.kind === "poll" ||
-        m.content.kind === "undecryptable",
+        !get().muted[m.convId] &&
+        (m.content.kind === "text" ||
+          m.content.kind === "file" ||
+          m.content.kind === "poll" ||
+          m.content.kind === "undecryptable"),
     );
     if (audible) playIncomingTone();
   }
@@ -651,6 +681,8 @@ export interface SendInput {
   replyTo?: LocalMessage | null;
   /** The file is a recorded voice message of this length. */
   voiceMs?: number;
+  /** Mark the outgoing envelope as a forward. */
+  forwarded?: boolean;
 }
 
 function replyRefFor(m: LocalMessage): ReplyRef {
@@ -689,6 +721,7 @@ export async function sendMessage(convId: string, input: SendInput): Promise<voi
       kind: "file",
       body: text,
       ...(replyTo ? { replyTo } : {}),
+      ...(input.forwarded ? { forwarded: true } : {}),
       attachment: {
         id: "",
         key: "",
@@ -701,7 +734,13 @@ export async function sendMessage(convId: string, input: SendInput): Promise<voi
     };
     pendingFiles.set(id, input.file);
   } else {
-    content = { v: 1, kind: "text", body: text, ...(replyTo ? { replyTo } : {}) };
+    content = {
+      v: 1,
+      kind: "text",
+      body: text,
+      ...(replyTo ? { replyTo } : {}),
+      ...(input.forwarded ? { forwarded: true } : {}),
+    };
   }
 
   const msg: LocalMessage = {
@@ -1011,6 +1050,7 @@ export interface PollInput {
   question: string;
   options: string[];
   multi: boolean;
+  forwarded?: boolean;
 }
 
 export async function sendPoll(convId: string, input: PollInput) {
@@ -1032,7 +1072,13 @@ export async function sendPoll(convId: string, input: PollInput) {
     createdAt: now,
     expiresAt: now + MESSAGE_TTL_MS,
     state: "sending",
-    content: { v: 1, kind: "poll", body: question, poll: { question, options, multi: input.multi } },
+    content: {
+      v: 1,
+      kind: "poll",
+      body: question,
+      poll: { question, options, multi: input.multi },
+      ...(input.forwarded ? { forwarded: true } : {}),
+    },
   };
   await saveAndShow(msg);
   await deliver(msg);
@@ -1065,7 +1111,7 @@ export async function sendVote(convId: string, targetId: string, choices: number
   await deliver(msg);
 }
 
-/* ---------------- nicknames ---------------- */
+/* ---------------- nicknames + local prefs ---------------- */
 
 export async function setNickname(peerUserId: string, nickname: string) {
   const name = nickname.trim().slice(0, 40);
@@ -1082,6 +1128,112 @@ export function nameOf(
   peer: { userId: string; displayName: string },
 ): string {
   return nicknames[peer.userId] || peer.displayName;
+}
+
+export async function setMuted(convId: string, muted: boolean) {
+  const next = { ...get().muted };
+  if (muted) next[convId] = true;
+  else delete next[convId];
+  set({ muted: next });
+  await vault().db.setKv("muted", next);
+}
+
+export async function setPinned(convId: string, pinned: boolean) {
+  const next = { ...get().pinned };
+  if (pinned) next[convId] = Date.now();
+  else delete next[convId];
+  set({ pinned: next });
+  await vault().db.setKv("pinned", next);
+}
+
+export async function setDraft(convId: string, text: string) {
+  const next = { ...get().drafts };
+  if (text) next[convId] = text;
+  else delete next[convId];
+  set({ drafts: next });
+  await vault().db.setKv("drafts", next);
+}
+
+export async function setStarred(messageId: string, starred: boolean) {
+  const next = { ...get().starred };
+  if (starred) next[messageId] = true;
+  else delete next[messageId];
+  set({ starred: next });
+  await vault().db.setKv("starred", next);
+}
+
+/** Forward a visible message into another conversation (re-encrypts for the peer). */
+export async function forwardMessage(targetConvId: string, source: LocalMessage) {
+  if (source.deleted) return;
+  const c = source.content;
+  if (c.kind === "text") {
+    await sendMessage(targetConvId, { text: c.body, forwarded: true });
+    return;
+  }
+  if (c.kind === "file" && c.attachment) {
+    const url = await loadAttachment(c.attachment);
+    const res = await fetch(url);
+    const blob = await res.blob();
+    const file = new File([blob], c.attachment.name || "attachment", {
+      type: c.attachment.mime || blob.type || "application/octet-stream",
+    });
+    await sendMessage(targetConvId, {
+      text: c.body || "",
+      file,
+      voiceMs: c.attachment.voice ? c.attachment.durationMs : undefined,
+      forwarded: true,
+    });
+    return;
+  }
+  if (c.kind === "poll" && c.poll) {
+    await sendPoll(targetConvId, {
+      question: c.poll.question,
+      options: [...c.poll.options],
+      multi: c.poll.multi,
+      forwarded: true,
+    });
+    return;
+  }
+  toast("That message can't be forwarded.");
+}
+
+export function messageSearchText(m: LocalMessage): string {
+  if (m.deleted) return "";
+  const c = m.content;
+  if (c.kind === "text") return c.body;
+  if (c.kind === "file") return `${c.body} ${c.attachment?.name ?? ""}`;
+  if (c.kind === "poll") return `${c.poll?.question ?? ""} ${(c.poll?.options ?? []).join(" ")}`;
+  if (c.kind === "system") return c.text;
+  return "";
+}
+
+export function exportChatText(
+  convId: string,
+  peerLabel: string,
+  nicknames: Record<string, string>,
+): string {
+  const list = get().messages[convId] ?? [];
+  const myId = me();
+  const lines = [
+    `Lop chat export — ${peerLabel}`,
+    `Exported ${new Date().toISOString()}`,
+    "",
+  ];
+  for (const m of list) {
+    if (cKindHidden(m)) continue;
+    const who =
+      m.direction === "out" || m.senderId === myId
+        ? "You"
+        : nicknames[m.senderId] || m.senderId;
+    const body = m.deleted ? "[deleted]" : messageSearchText(m) || `[${m.content.kind}]`;
+    lines.push(`[${new Date(m.createdAt).toISOString()}] ${who}: ${body}`);
+  }
+  return lines.join("\n");
+}
+
+function cKindHidden(m: LocalMessage) {
+  const k = m.content.kind;
+  return k === "reaction" || k === "vote" || k === "edit";
 }
 
 /* ---------------- reply / typing ---------------- */
