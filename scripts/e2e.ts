@@ -622,6 +622,52 @@ async function main() {
   assert.equal((await g3.req("GET", `/attachments/${gup.data.attachmentId}`)).status, 404);
   ok("group: outsiders cannot post; delete for everyone removes every copy and the file");
 
+  // --- voice call signaling -------------------------------------------------
+  await g1.openChat(g2);
+  const callId = () => `call_${crypto.randomUUID().replace(/-/g, "")}`;
+  const sig = (from: Client, to: Client, kind: string, data?: unknown, id = callId()) =>
+    from.req("POST", "/calls/signal", { to: to.userId, callId: id, kind, data });
+
+  const ice = await g1.req("GET", "/calls/ice");
+  assert.equal(ice.status, 200);
+  assert.ok(ice.data.iceServers[0].urls.some((u: string) => u.startsWith("stun:")), "free STUN is offered");
+
+  assert.equal((await sig(outsider, g2, "offer", { sdp: "v=0" })).status, 403, "no chat, no call");
+  assert.equal((await sig(g1, g2, "offer", { sdp: "x".repeat(20_000) })).status, 413, "oversized SDP refused");
+  assert.equal((await g1.req("POST", "/calls/signal", { to: g2.userId, callId: "nope", kind: "offer" })).status, 400);
+  assert.equal((await sig(g1, g2, "teleport")).status, 400);
+  const offline = await sig(g1, g2, "offer", { sdp: "v=0" });
+  assert.equal(offline.status, 200);
+  assert.equal(offline.data.delivered, 0, "callee with no open tab is reported as unavailable");
+  ok("calls: only chat partners can call, payloads are bounded, an offline callee is reported");
+
+  // With an open tab (WebSocket) the signal is delivered and reaches the callee.
+  // @ts-ignore: `ws` ships with vite.
+  const { default: CallWS } = await import("ws");
+  const wsBase = BASE.replace(/^http/, "ws") + `/api/v1/ws?vt=${encodeURIComponent(g2.vault)}`;
+  const sock = new CallWS(wsBase, { headers: { Cookie: g2.cookie, Origin: BASE } });
+  const received = new Promise<any>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("no call.signal received")), 8000);
+    sock.on("message", (raw: Buffer) => {
+      const ev = JSON.parse(String(raw));
+      if (ev.type === "call.signal") {
+        clearTimeout(t);
+        resolve(ev);
+      }
+    });
+    sock.on("error", reject);
+  });
+  await new Promise((r) => sock.on("open", r));
+  const liveId = callId();
+  const live = await sig(g1, g2, "offer", { sdp: "v=0 live" }, liveId);
+  assert.equal(live.data.delivered, 1, "an open tab receives the offer");
+  const ev = await received;
+  assert.equal(ev.from, g1.userId);
+  assert.equal(ev.callId, liveId);
+  assert.equal(ev.kind, "offer");
+  sock.close();
+  ok("calls: an open tab receives the offer in real time");
+
   console.log("\nAll e2e checks passed.");
 }
 
