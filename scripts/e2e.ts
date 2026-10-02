@@ -517,20 +517,58 @@ async function main() {
   const g1 = new Client("gina");
   const g2 = new Client("gus");
   const g3 = new Client("gwen");
+  const g4 = new Client("gil");
   const outsider = new Client("oto");
-  for (const g of [g1, g2, g3, outsider]) await g.register();
+  for (const g of [g1, g2, g3, g4, outsider]) await g.register();
   const gname = `Team ${rand()}`;
   const gfile = join(tmpdir(), `tetris-e2e-group-${rand()}.json`);
   writeFileSync(
     gfile,
-    JSON.stringify([{ name: gname, members: [g1.username, g2.username, g3.username] }]),
+    JSON.stringify([
+      { name: gname, code: "2454", members: [g1.username, g2.username, g3.username, g4.username] },
+    ]),
   );
   execSync(`npx tsx scripts/seed-groups.ts "${gfile}"`, { stdio: "pipe" });
 
+  // Before the code is entered the group is listed but empty and closed.
+  const locked = (await g1.req("GET", "/conversations")).data.conversations.find(
+    (c: any) => c.group?.name === gname,
+  );
+  assert.ok(locked?.locked, "an unentered group is listed as locked");
+  assert.equal(locked.group.members.length, 0, "a locked group reveals no members");
+  const blocked = await g1.sendGroup(locked.id, [], "too early").catch(() => null);
+  assert.ok(!blocked || blocked.status === 400 || blocked.status === 403, "no posting before the code");
+  const gid = locked.id;
+  const unlockReq = (c: Client, code: string) => c.req("POST", `/groups/${gid}/unlock`, { code });
+  assert.equal((await unlockReq(g1, "2454")).status, 409, "the clock must be started first");
+  assert.equal((await g1.req("POST", `/groups/${gid}/unlock/start`)).data.attemptsLeft, 2);
+  assert.equal((await unlockReq(g1, "12")).status, 400, "the code is four digits");
+  const miss = await unlockReq(g1, "0000");
+  assert.deepEqual([miss.data.ok, miss.data.attemptsLeft], [false, 1], "a wrong first try leaves one more");
+  assert.equal((await unlockReq(g1, "2454")).data.ok, true, "the right code opens the group");
+  assert.equal((await g1.req("POST", `/groups/${gid}/unlock/start`)).data.access, "granted", "never asked again");
+  for (const g of [g2, g3]) {
+    await g.req("POST", `/groups/${gid}/unlock/start`);
+    assert.equal((await unlockReq(g, "2454")).data.ok, true);
+  }
+  // g4 fails both tries and is shut out for good.
+  await g4.req("POST", `/groups/${gid}/unlock/start`);
+  assert.equal((await unlockReq(g4, "1111")).data.attemptsLeft, 1);
+  const shut = await unlockReq(g4, "2222");
+  assert.equal(shut.status, 403);
+  assert.equal(shut.data.denied, true, "a second wrong code closes the group");
+  assert.equal((await unlockReq(g4, "2454")).status, 403, "even the right code is too late");
+  assert.ok(
+    !(await g4.req("GET", "/conversations")).data.conversations.some((c: any) => c.group?.name === gname),
+    "a shut-out member no longer sees the group",
+  );
+  assert.deepEqual((await g4.req("GET", `/users/search?q=${gname.slice(0, 6).toLowerCase()}`)).data.groups, []);
+  ok("group code: two tries, right code opens for good, a failed run closes it for good");
+
   const glist = await g1.req("GET", "/conversations");
   const gconv = glist.data.conversations.find((c: any) => c.group?.name === gname);
-  assert.ok(gconv, "the group is listed for its members");
-  assert.equal(gconv.group.members.length, 3);
+  assert.ok(gconv && !gconv.locked, "the group is listed for its members");
+  assert.equal(gconv.group.members.length, 3, "only members who entered the code take part");
   assert.ok(
     !(await outsider.req("GET", "/conversations")).data.conversations.some((c: any) => c.group?.name === gname),
     "non-members never see the group",

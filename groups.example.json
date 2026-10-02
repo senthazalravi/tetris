@@ -1,3 +1,10 @@
 [
-  { "name": "Example group", "members": ["alice", "bob"] }
+  {
+    "name": "Example group",
+    "members": [
+      "alice",
+      "bob"
+    ],
+    "code": "0000"
+  }
 ]
