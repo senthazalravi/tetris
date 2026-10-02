@@ -3,6 +3,7 @@ import { LockKeyhole, ShieldAlert } from "lucide-react";
 import { PASSCODE_LENGTH, PASSCODE_PATTERN, UNLOCK_WINDOW_MS } from "@tetris/config";
 import { Button, Ring, Wordmark } from "@/ui/kit";
 import { SiteFooter, type LegalPageId } from "@/ui/SiteFooter";
+import { InstallButton } from "@/ui/InstallButton";
 import { ThemeButton } from "@/ui/ThemeButton";
 import { Turnstile, turnstileEnabled } from "@/ui/Turnstile";
 import { useSession } from "@/state/session";
@@ -104,7 +105,10 @@ export function Login({ onOpenLegal }: { onOpenLegal: (id: LegalPageId) => void 
     <div className="relative flex h-full flex-col overflow-y-auto bg-bg">
       <header className="relative flex items-center justify-between px-6 py-5">
         <Wordmark size={26} />
-        <ThemeButton />
+        <div className="flex items-center gap-2">
+          <InstallButton />
+          <ThemeButton />
+        </div>
       </header>
 
       <main className="relative flex flex-1 items-center justify-center px-5 py-4">

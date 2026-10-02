@@ -3,6 +3,7 @@ import { markRead, selectConversation, startEngine, stopEngine, useChat } from "
 import { useSession } from "@/state/session";
 import { Game } from "@/screens/Game";
 import { Avatar } from "@/ui/kit";
+import { InstallButton } from "@/ui/InstallButton";
 import { ThemeButton } from "@/ui/ThemeButton";
 import { Profile } from "./Modals";
 import { SearchBar } from "./SearchBar";
@@ -99,6 +100,7 @@ export function ChatApp() {
             </button>
           )}
           <span className="flex-1" />
+          <InstallButton />
           <ThemeButton />
         </header>
         <div className="relative mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col">
