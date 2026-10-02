@@ -57,7 +57,16 @@ export interface EditRef {
 
 export const EDIT_BODY_MAX = 8000;
 
-export type EnvelopeKind = "text" | "file" | "reaction" | "poll" | "vote" | "edit";
+export type CallStatus = "missed" | "declined" | "ended";
+
+/** A voice call's entry in the chat. Sent by the caller once the call is over. */
+export interface CallRef {
+  status: CallStatus;
+  /** How long the call was connected, for `ended`. */
+  durationMs?: number;
+}
+
+export type EnvelopeKind = "text" | "file" | "reaction" | "poll" | "vote" | "edit" | "call";
 
 export interface MessageEnvelope {
   v: 1;
@@ -69,6 +78,7 @@ export interface MessageEnvelope {
   poll?: PollRef;
   vote?: VoteRef;
   edit?: EditRef;
+  call?: CallRef;
   /** True when this message was forwarded from another chat. */
   forwarded?: boolean;
 }
@@ -77,7 +87,7 @@ export function encodeEnvelope(e: MessageEnvelope): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(e));
 }
 
-const KINDS: readonly string[] = ["text", "file", "reaction", "poll", "vote", "edit"];
+const KINDS: readonly string[] = ["text", "file", "reaction", "poll", "vote", "edit", "call"];
 
 export function decodeEnvelope(bytes: Uint8Array): MessageEnvelope {
   const parsed = JSON.parse(new TextDecoder().decode(bytes)) as MessageEnvelope;
@@ -125,6 +135,17 @@ export function decodeEnvelope(bytes: Uint8Array): MessageEnvelope {
       parsed.body.length > EDIT_BODY_MAX
     ) {
       throw new Error("Malformed edit");
+    }
+  }
+  if (parsed.kind === "call") {
+    const c = parsed.call;
+    if (
+      !c ||
+      !["missed", "declined", "ended"].includes(c.status) ||
+      (c.durationMs !== undefined &&
+        (!Number.isFinite(c.durationMs) || c.durationMs < 0 || c.durationMs > 24 * 3_600_000))
+    ) {
+      throw new Error("Malformed call entry");
     }
   }
   if (parsed.forwarded !== undefined && typeof parsed.forwarded !== "boolean") {

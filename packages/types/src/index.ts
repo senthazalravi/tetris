@@ -95,11 +95,21 @@ export interface ChallengeDto {
   vaultSalt: string;
 }
 
+/** Messages exchanged to set up (and tear down) a one-to-one voice call. */
+export type CallSignalKind = "offer" | "answer" | "candidate" | "decline" | "busy" | "hangup";
+
 export type RealtimeEvent =
   | { type: "message.new"; conversationId: ConversationId }
   | { type: "message.state"; conversationId: ConversationId }
   | { type: "message.deleted"; conversationId: ConversationId; messageId: MessageId }
   | { type: "conversation.refresh" }
   | { type: "typing"; conversationId: ConversationId; userId: UserId; active: boolean }
+  | {
+      type: "call.signal";
+      from: UserId;
+      callId: string;
+      kind: CallSignalKind;
+      data?: unknown;
+    }
   | { type: "wipe.completed" }
   | { type: "session.revoked" };
