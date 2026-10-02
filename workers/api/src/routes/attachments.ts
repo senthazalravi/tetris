@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import {
   MAX_ATTACHMENT_BYTES,
+  MAX_TOTAL_ATTACHMENT_BYTES,
   MAX_USER_ATTACHMENT_BYTES,
   PENDING_ATTACHMENT_TTL_MS,
 } from "@tetris/config";
@@ -56,6 +57,13 @@ attachmentRoutes.put("/conversations/:id/attachments", requireUnlocked, async (c
   )
     .bind(me.id)
     .first<{ total: number }>();
+  // Free-tier guard: never let total stored bytes approach the R2 free allowance.
+  const everyone = await c.env.DB.prepare(
+    `SELECT COALESCE(SUM(size), 0) AS total FROM attachments`,
+  ).first<{ total: number }>();
+  if ((everyone?.total ?? 0) + size > MAX_TOTAL_ATTACHMENT_BYTES) {
+    return c.json({ error: "Storage is full for now. It frees up as files expire." }, 507);
+  }
   if ((used?.total ?? 0) + size > MAX_USER_ATTACHMENT_BYTES) {
     return c.json({ error: "Attachment quota reached. It frees up as files expire." }, 413);
   }

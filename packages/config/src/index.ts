@@ -32,6 +32,11 @@ export const MAX_VIDEO_BYTES = 16 * 1024 * 1024;
 /** Longest voice message we record (ms). */
 export const MAX_VOICE_MS = 5 * 60 * 1000;
 /** Total live attachment bytes one user may have on the server at once. */
+/**
+ * Hard ceiling on all live attachments together. R2 is the one Cloudflare product
+ * here that bills past its free 10 GB, so uploads stop well before that.
+ */
+export const MAX_TOTAL_ATTACHMENT_BYTES = 8 * 1024 * 1024 * 1024;
 export const MAX_USER_ATTACHMENT_BYTES = 300 * 1024 * 1024;
 export const MAX_AVATAR_BYTES = 200 * 1024;
 
