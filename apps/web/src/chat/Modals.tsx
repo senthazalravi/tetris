@@ -22,6 +22,7 @@ import {
   Trash2,
   UserMinus,
   Send,
+  Bell,
 } from "lucide-react";
 import { DISPLAY_NAME_MAX, PASSCODE_PATTERN } from "@tetris/config";
 import type { ConversationDto } from "@tetris/types";
@@ -40,6 +41,11 @@ import {
   useChat,
 } from "@/state/chat";
 import type { LocalMessage } from "@/state/localdb";
+import {
+  notificationPermission,
+  requestNotificationPermission,
+  type NotifyPermission,
+} from "@/lib/notify";
 import { useSession } from "@/state/session";
 import { useTheme, type ThemeChoice } from "@/state/theme";
 import {
@@ -140,6 +146,60 @@ export function ChatPrivacyLearnModal({
         <Button onClick={onClose}>Got it</Button>
       </div>
     </Modal>
+  );
+}
+
+/** Turn browser notifications on or off for new messages (text never shown). */
+function NotificationRow() {
+  const [perm, setPerm] = useState<NotifyPermission>(() => notificationPermission());
+
+  async function enable() {
+    const next = await requestNotificationPermission();
+    setPerm(next);
+    if (next === "granted") {
+      showTestNotification();
+    }
+  }
+
+  function showTestNotification() {
+    try {
+      new Notification("Tetris", {
+        body: "Notifications are on. You will see who wrote, never what.",
+        icon: "/icons/icon-192.png",
+      });
+    } catch {
+      /* some mobile browsers only allow service-worker notifications */
+    }
+  }
+
+  return (
+    <div className="mt-6 rounded-2xl border border-line bg-s2 p-4">
+      <div className="mb-1 flex items-center gap-2 text-[13px] font-medium text-muted">
+        <Bell size={15} /> Notifications
+      </div>
+      {perm === "unsupported" && (
+        <p className="text-sm text-muted">This browser does not support notifications.</p>
+      )}
+      {perm === "granted" && (
+        <p className="text-sm text-muted">
+          On. When Tetris is in the background you get a sound and a notification saying who wrote.
+        </p>
+      )}
+      {perm === "denied" && (
+        <p className="text-sm text-muted">
+          Blocked in your browser. Allow notifications for this site in the address bar settings to
+          turn them on.
+        </p>
+      )}
+      {perm === "default" && (
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm text-muted">Get a notification when a message arrives while you are away.</p>
+          <Button variant="soft" size="sm" onClick={() => void enable()}>
+            Turn on
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -706,6 +766,8 @@ export function Profile({ onClose }: { onClose: () => void }) {
           Update passcode
         </Button>
       </form>
+
+      <NotificationRow />
 
       <div className="mt-6 rounded-2xl border border-line bg-s2 p-4">
         <div className="mb-2 flex items-center gap-2 text-[13px] font-medium text-muted">

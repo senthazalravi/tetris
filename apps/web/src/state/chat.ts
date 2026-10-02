@@ -34,7 +34,12 @@ import type {
 import { api, ApiError, getVaultToken } from "@/lib/api";
 import { newMessageId } from "@/lib/format";
 import { imageMeta, mediaKind, mimeOf } from "@/lib/media";
-import { armIncomingSounds, disarmIncomingSounds, playIncomingTone } from "@/lib/notify";
+import {
+  armIncomingSounds,
+  disarmIncomingSounds,
+  playIncomingTone,
+  showIncomingNotification,
+} from "@/lib/notify";
 import type { LocalMessage, LocalState, MessageContent } from "./localdb";
 import { saveKeys, vault } from "./vault";
 import { useSession } from "./session";
@@ -553,7 +558,7 @@ async function syncPass() {
   if (needConversations) await refreshConversations();
   if (newIncoming.length) {
     await acknowledge(newIncoming);
-    const audible = newIncoming.some(
+    const audible = newIncoming.filter(
       (m) =>
         !get().muted[m.convId] &&
         (m.content.kind === "text" ||
@@ -561,7 +566,34 @@ async function syncPass() {
           m.content.kind === "poll" ||
           m.content.kind === "undecryptable"),
     );
-    if (audible) playIncomingTone();
+    if (audible.length) {
+      playIncomingTone();
+      announceIncoming(audible);
+    }
+  }
+}
+
+/** Background alert: who it is from and how many, never the message itself. */
+function announceIncoming(msgs: LocalMessage[]) {
+  const perConv = new Map<string, number>();
+  for (const m of msgs) perConv.set(m.convId, (perConv.get(m.convId) ?? 0) + 1);
+  if (perConv.size !== 1) {
+    showIncomingNotification(`${msgs.length} new messages in ${perConv.size} chats`, "tetris");
+    return;
+  }
+  const first = [...perConv][0];
+  if (!first) return;
+  const [convId, n] = first;
+  const conv = convFor(convId);
+  if (conv?.group) {
+    const label = n === 1 ? "1 new message" : `${n} new messages`;
+    showIncomingNotification(`${label} in ${conv.group.name}`, convId);
+  } else {
+    const name = conv ? nameOf(get().nicknames, conv.peer) : "Someone";
+    showIncomingNotification(
+      n === 1 ? `${name} sent you a message` : `${name} sent you ${n} messages`,
+      convId,
+    );
   }
 }
 
