@@ -45,7 +45,7 @@ const WIPE_ALL = [
   "users",
 ];
 const file = process.argv.find((a) => a.endsWith(".json")) ?? "users.local.json";
-const DB_NAME = "tetris-db";
+const DB_NAME = "lop-db";
 
 function fail(message: string): never {
   console.error(`seed-users: ${message}`);

@@ -23,7 +23,7 @@ interface SeedGroup {
 
 const remote = process.argv.includes("--remote");
 const file = process.argv.find((a) => a.endsWith(".json")) ?? "groups.local.json";
-const DB_NAME = "tetris-db";
+const DB_NAME = "lop-db";
 
 function fail(message: string): never {
   console.error(`seed-groups: ${message}`);

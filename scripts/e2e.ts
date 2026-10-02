@@ -322,7 +322,7 @@ async function main() {
   assert.equal(rx.out[0]!.text, secret);
   assert.ok(!JSON.stringify(rx.raw).includes(secret), "wire data never contains plaintext");
   const dump = execSync(
-    `npx wrangler d1 execute tetris-db --local --json --command "SELECT hex(ciphertext) AS c FROM messages"`,
+    `npx wrangler d1 execute lop-db --local --json --command "SELECT hex(ciphertext) AS c FROM messages"`,
     { cwd: "workers/api", encoding: "utf8" },
   );
   assert.ok(!dump.includes(Buffer.from(secret).toString("hex").toUpperCase()));
@@ -379,7 +379,7 @@ async function main() {
 
   // --- 24h expiry ------------------------------------------------------
   execSync(
-    `npx wrangler d1 execute tetris-db --local --command "UPDATE messages SET expires_at = 1 WHERE id = '${sent.id}'"`,
+    `npx wrangler d1 execute lop-db --local --command "UPDATE messages SET expires_at = 1 WHERE id = '${sent.id}'"`,
     { cwd: "workers/api", stdio: "ignore" },
   );
   const expired = await bob.req("GET", "/sync?ts=0&id=");
@@ -388,7 +388,7 @@ async function main() {
   assert.equal(cron.status, 200);
   await sleep(500);
   const left = execSync(
-    `npx wrangler d1 execute tetris-db --local --json --command "SELECT COUNT(*) AS n FROM messages WHERE id = '${sent.id}'"`,
+    `npx wrangler d1 execute lop-db --local --json --command "SELECT COUNT(*) AS n FROM messages WHERE id = '${sent.id}'"`,
     { cwd: "workers/api", encoding: "utf8" },
   );
   assert.ok(left.includes('"n": 0'), left);
@@ -559,7 +559,7 @@ async function main() {
   ok("group send: each member decrypts their own copy; expiry is 7 days");
 
   const gdump = execSync(
-    `npx wrangler d1 execute tetris-db --local --json --command "SELECT hex(ciphertext) AS c FROM messages"`,
+    `npx wrangler d1 execute lop-db --local --json --command "SELECT hex(ciphertext) AS c FROM messages"`,
     { cwd: "workers/api", encoding: "utf8" },
   );
   assert.ok(!gdump.includes(Buffer.from(gsecret).toString("hex").toUpperCase()));
