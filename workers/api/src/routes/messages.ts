@@ -246,6 +246,8 @@ interface SendBody {
   cryptoHeader?: string;
   ciphertext?: string;
   attachmentId?: string | null;
+  /** false for invisible carriers (reactions, edits, votes): no email nudge. */
+  notify?: boolean;
 }
 
 messageRoutes.post("/conversations/:id/messages", requireUnlocked, async (c) => {
@@ -337,8 +339,8 @@ messageRoutes.post("/conversations/:id/messages", requireUnlocked, async (c) => 
     c.env.DB.prepare(
       `INSERT INTO messages (id, conversation_id, sender_user_id, sender_device_id,
          recipient_user_id, recipient_device_id, ciphertext, crypto_header, attachment_id,
-         delivery_state, created_at, expires_at, updated_at, deleted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'accepted', ?, ?, ?, NULL)`,
+         delivery_state, created_at, expires_at, updated_at, deleted_at, notify)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'accepted', ?, ?, ?, NULL, ?)`,
     ).bind(
       body.messageId,
       convId,
@@ -352,6 +354,7 @@ messageRoutes.post("/conversations/:id/messages", requireUnlocked, async (c) => 
       now,
       expiresAt,
       now,
+      body.notify === false ? 0 : 1,
     ),
     c.env.DB.prepare(`UPDATE conversations SET last_message_at = ? WHERE id = ?`).bind(now, convId),
     // Recipient's side of the thread exists as soon as something arrives (WhatsApp-style).
@@ -398,6 +401,8 @@ interface GroupSendBody {
   senderDeviceId?: string;
   copies?: GroupCopy[];
   attachmentId?: string | null;
+  /** false for invisible carriers (reactions, edits, votes): no email nudge. */
+  notify?: boolean;
 }
 
 messageRoutes.post("/conversations/:id/group-messages", requireUnlocked, async (c) => {
@@ -511,8 +516,9 @@ messageRoutes.post("/conversations/:id/group-messages", requireUnlocked, async (
   const expiresAt = now + GROUP_MESSAGE_TTL_MS;
   const insert = `INSERT INTO messages (id, conversation_id, sender_user_id, sender_device_id,
       recipient_user_id, recipient_device_id, ciphertext, crypto_header, attachment_id,
-      delivery_state, created_at, expires_at, updated_at, deleted_at, group_msg_id, canonical)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'accepted', ?, ?, ?, NULL, ?, ?)`;
+      delivery_state, created_at, expires_at, updated_at, deleted_at, group_msg_id, canonical, notify)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'accepted', ?, ?, ?, NULL, ?, ?, ?)`;
+  const notifyFlag = body.notify === false ? 0 : 1;
   const stmts = [
     // The sender's own row: no recipient, no ciphertext. It carries the aggregate receipt.
     c.env.DB.prepare(insert).bind(
@@ -530,6 +536,7 @@ messageRoutes.post("/conversations/:id/group-messages", requireUnlocked, async (
       now,
       body.messageId,
       1,
+      0,
     ),
     ...copies.map((cp) =>
       c.env.DB.prepare(insert).bind(
@@ -547,6 +554,7 @@ messageRoutes.post("/conversations/:id/group-messages", requireUnlocked, async (
         now,
         body.messageId,
         0,
+        notifyFlag,
       ),
     ),
     c.env.DB.prepare(`UPDATE conversations SET last_message_at = ? WHERE id = ?`).bind(now, convId),
