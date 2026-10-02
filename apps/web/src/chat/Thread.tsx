@@ -6,6 +6,7 @@ import {
   ChevronUp,
   Images,
   Info,
+  Phone,
   Search,
   ShieldCheck,
   Users,
@@ -15,6 +16,7 @@ import {
 import type { ConversationDto } from "@tetris/types";
 import { formatDay } from "@/lib/format";
 import { messageSearchText, nameOf, selectConversation, toast, useChat } from "@/state/chat";
+import { startCall, useCall } from "@/state/call";
 import { useSession } from "@/state/session";
 import { Avatar, IconButton } from "@/ui/kit";
 import { useNow } from "@/ui/hooks";
@@ -33,6 +35,7 @@ export function Thread({ conv }: { conv: ConversationDto }) {
   const nicknames = useChat((s) => s.nicknames);
   const peerName = nameOf(nicknames, conv.peer);
   const group = conv.group;
+  const callPhase = useCall((st) => st.phase);
   const mentionable = useMemo(
     () =>
       group
@@ -237,6 +240,16 @@ export function Thread({ conv }: { conv: ConversationDto }) {
             </span>
           </span>
         </button>
+        {!group && (
+          <IconButton
+            label="Voice call"
+            onClick={() => void startCall(conv)}
+            disabled={callPhase !== "idle"}
+            className={callPhase !== "idle" ? "opacity-40" : ""}
+          >
+            <Phone size={20} />
+          </IconButton>
+        )}
         <IconButton
           label="Search in chat"
           onClick={() => setSearchOpen((v) => !v)}

@@ -16,6 +16,8 @@ import {
   ShieldAlert,
   Star,
   Trash2,
+  Phone,
+  PhoneMissed,
 } from "lucide-react";
 import { formatTime, linkify } from "@/lib/format";
 import type { LocalMessage } from "@/state/localdb";
@@ -201,6 +203,37 @@ function BubbleImpl({
 
   if (c.kind === "reaction" || c.kind === "vote" || c.kind === "edit") return null;
 
+  const time = formatTime(m.createdAt);
+
+  if (c.kind === "call") {
+    const status = c.call?.status ?? "missed";
+    const secs = Math.round((c.call?.durationMs ?? 0) / 1000);
+    const length = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+    const label =
+      status === "ended"
+        ? `Voice call · ${length}`
+        : status === "declined"
+          ? out
+            ? "Voice call · declined"
+            : "Declined voice call"
+          : out
+            ? "Voice call · no answer"
+            : "Missed voice call";
+    const Icon = status === "missed" && !out ? PhoneMissed : Phone;
+    return (
+      <div className="my-2 flex justify-center fade-in">
+        <span
+          className={`flex items-center gap-2 rounded-full bg-s2 px-3.5 py-1.5 text-xs ${
+            status === "missed" && !out ? "text-danger" : "text-muted"
+          }`}
+        >
+          <Icon size={13} className="shrink-0" />
+          {label} · {time}
+        </span>
+      </div>
+    );
+  }
+
   if (c.kind === "system") {
     return (
       <div className="my-2 flex justify-center fade-in">
@@ -211,8 +244,6 @@ function BubbleImpl({
       </div>
     );
   }
-
-  const time = formatTime(m.createdAt);
 
   if (m.deleted) {
     return (

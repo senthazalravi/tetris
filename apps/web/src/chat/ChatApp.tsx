@@ -5,6 +5,7 @@ import { Game } from "@/screens/Game";
 import { Avatar } from "@/ui/kit";
 import { InstallButton } from "@/ui/InstallButton";
 import { ThemeButton } from "@/ui/ThemeButton";
+import { CallOverlay } from "./CallOverlay";
 import { Profile } from "./Modals";
 import { SearchBar } from "./SearchBar";
 import { Thread } from "./Thread";
@@ -120,6 +121,7 @@ export function ChatApp() {
         </main>
       )}
 
+      <CallOverlay />
       {profile && <Profile onClose={() => setProfile(false)} />}
       {toast && (
         <div
