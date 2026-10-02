@@ -48,6 +48,8 @@ export interface ConversationDto {
   blocked: boolean;
   /** Present only for group conversations. */
   group?: GroupInfo;
+  /** A group the caller has not entered the code for yet: no members, no messages. */
+  locked?: boolean;
 }
 
 /** One encrypted copy of a group message, addressed to a single member. */

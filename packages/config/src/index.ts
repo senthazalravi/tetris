@@ -21,6 +21,11 @@ export const PASSCODE_LENGTH = 8;
 export const PASSCODE_PATTERN = /^\d{8}$/;
 export const DISPLAY_NAME_MAX = 40;
 
+/** A group is entered once with a short code: four digits, two tries, 30 seconds. */
+export const GROUP_CODE_LENGTH = 4;
+export const GROUP_CODE_PATTERN = /^\d{4}$/;
+export const GROUP_CODE_ATTEMPTS = 2;
+
 export const MAX_CIPHERTEXT_BYTES = 64 * 1024;
 /**
  * Documents, photos, audio and everything else. The only real ceiling is the
