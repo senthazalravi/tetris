@@ -39,7 +39,7 @@ tetris/
 |---|---|
 | Auth | register/start/session (username + passcode verifier) |
 | Unlock | 30s challenge, one attempt |
-| Contacts | exact lookup, private lists |
+| Contacts | search, private lists, groups |
 | Identity | devices, prekey bundles |
 | Messaging | ciphertext relay, TTL |
 | Attachments | R2 ciphertext I/O |

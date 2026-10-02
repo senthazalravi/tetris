@@ -11,38 +11,36 @@ Agents treat these as fixed unless the human explicitly changes them.
 ## Identity and auth
 
 - Web only.
-- **Create account:** unique `@username` + email (notifications only) + 8-digit passcode.
-- **Login:** username + passcode (one attempt, 30s), then the Tetris home screen; search (unlocked after a round) opens chats.
-- No Google sign-in.
-- No phone number / SMS OTP in MVP.
+- **Accounts are predefined** by an administrator: unique `@username`, email, 8-digit passcode. There is no sign-up screen.
+- **Login:** username + passcode (one attempt, 30s), then the Tetris home screen. Finishing a round unlocks search.
+- **Forgot / expired passcode:** confirm the email on file, then choose a new passcode. No reset email or link.
+- The email on file is also used for unread-message notification emails.
+- No Google sign-in. No phone number / SMS OTP.
 
-## Contacts
+## Discovery
 
-- Find people by **exact user ID / username** (`@alice`).
-- No match → not found. No fuzzy search, no “everyone on Tetris” list.
-- **Contact list shows only people this user saved or chats with.**
-- Flow: New chat → enter `@userid` → match → Add contact / Message.
+- Search by part of a username or a group name once a round has ended (`Ctrl+K` / `Cmd+K`).
+- No sidebar, chat list or unread counters.
+- Groups are predefined and visible only to their members.
 
 ## Messaging
 
-- 1:1 text, emoji, replies, links, images, video, PDF, files.
-- UI should feel like WhatsApp Web.
-- Delivery/read ticks and typing in MVP.
+- Direct and group chats: text, emoji, replies, links, reactions, edits, polls, images, video, audio, voice notes, files.
+- Group messages support `@username` mentions.
+- Chat opens in a panel beside the Tetris game (35% game, 65% chat).
+- Delivery/read ticks and typing (direct chats) are included.
+- The installable web app can run in its own window; a chime and optional desktop notifications announce new messages.
 
 ## Security
 
 - Full **E2EE** for message and attachment content.
-- Every message **expires 24 hours** after server `created_at`.
-- After login: **30 seconds**, **one** vault passcode attempt.
+- Direct messages **expire after 24 hours**; group messages and files after **7 days** (server `created_at`).
+- After login: **30 seconds**, **one** passcode attempt.
   - **Correct in time:** unlock; keep contacts and messages.
-  - **Wrong or timeout:** wipe communication state; account remains; empty UI.
+  - **Wrong or timeout:** wipe communication state; account remains; the passcode expires.
 - There is no account password; the passcode is the only secret.
 
 ## Cost
 
 - Run on **free** tiers (Cloudflare Workers/D1/R2/DO, Turnstile).
-- No paid third-party APIs in MVP.
-
-## Later
-
-- Groups, voice notes, multi-device, calls — not MVP.
+- Email notifications use the free tier of the email provider and stay under its daily and monthly limits.

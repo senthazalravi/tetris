@@ -31,7 +31,7 @@ Crypto is centered on:
 - **Double Ratchet** with **AES-256-GCM** for ongoing messages
 - **Per-file content keys** for attachments (key travels inside the E2EE envelope)
 
-The 8-digit passcode is the only user secret (there is no account password; the email collected at sign-up is only for notifications):
+The 8-digit passcode is the only user secret (there is no account password; the email on file is used only to reset an expired passcode and to send unread-message notifications):
 
 | Secret | Role |
 | --- | --- |
@@ -42,6 +42,7 @@ The unlock gate (30 seconds, one attempt) and wipe-on-failure are intentional pr
 
 ## What Tetris does not claim
 
+- **Notification emails reveal metadata.** An unread-message email names the sender or group and how many messages are waiting. It never contains message text, and it is sent only after messages have stayed unread for a few minutes.
 - **Not metadata-private.** A relay can still see routing metadata (for example who messaged whom, when, and approximate sizes).
 - **Not immune to a compromised browser.** Malicious extensions, XSS in the delivered app, or a malicious device can undermine any web E2EE client.
 - **Not a guarantee against peer retention.** Recipients may keep decrypted copies until expiry or local cleanup.
@@ -53,7 +54,7 @@ The unlock gate (30 seconds, one attempt) and wipe-on-failure are intentional pr
 ## Secrets and deployment hygiene
 
 - Never commit `.dev.vars`, `.env`, API keys, or `SESSION_SECRET`
-- Treat production secrets as Wrangler/dashboard secrets only
+- Treat production secrets (including the email API key) as secrets of the API only, never as code or config in the repository
 - Do not paste live production URLs, account credentials, or vault passcodes into public issues or commits
 
 ## Supported versions

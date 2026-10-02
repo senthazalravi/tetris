@@ -26,5 +26,5 @@ If historical PRD conflicts with HLD/LLD 1.0 or these agent files, prefer **HLD/
 - This is a **real product**, not a demo, prototype showcase, or sales sandbox — use real persistence and real encryption paths.
 - Free Cloudflare stack only.
 - Encrypt before any content leaves the browser.
-- Exact username lookup only; contact list is per-user and private.
+- People and groups are found by search (substring of a username or group name); contact lists are per-user and private.
 - Correct vault passcode keeps data; wrong/timeout wipes communication state only.

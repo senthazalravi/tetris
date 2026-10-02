@@ -2,3 +2,9 @@ COOKIE_SECURE=false
 ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 SESSION_SECRET=dev-only-secret-change-in-production
 APP_ORIGIN=http://localhost:5173
+
+# Email notifications (optional). Without a key nothing is sent.
+# RESEND_API_KEY=your-resend-api-key
+# MAIL_FROM=Tetris <notify@your-verified-domain>
+# Print digests in the API log instead of sending them:
+# MAIL_DRY_RUN=true

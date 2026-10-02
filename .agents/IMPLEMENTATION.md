@@ -5,7 +5,7 @@ Agents should build in this sequence unless directed otherwise.
 1. **Scaffold** monorepo, web app, worker, D1 migrations, R2 bucket, CI lint/test.  
 2. **Auth** register/start/session with username+passcode.  
 3. **Unlock challenge** + server timer + wipe epoch endpoint + client wipe.  
-4. **Exact username lookup** + private contacts CRUD.  
+4. **Username and group search** + private contacts.  
 5. **Crypto package** identity/prekeys/session facade + device APIs.  
 6. **1:1 send/receive** ciphertext path + decrypt UI.  
 7. **24h TTL** cron + lazy expiry + client prune.  
