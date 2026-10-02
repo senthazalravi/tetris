@@ -31,7 +31,10 @@ export async function runExpiryCleanup(env: Env, limit = 200): Promise<{
 
   // Housekeeping for tables that would otherwise grow forever.
   await env.DB.batch([
-    env.DB.prepare(`DELETE FROM rate_limits WHERE window_start < ?`).bind(now - 2 * 60 * 60_000),
+    // The email caps use long windows, so they are exempt from this cleanup.
+    env.DB.prepare(`DELETE FROM rate_limits WHERE window_start < ? AND key NOT LIKE 'email:%'`).bind(
+      now - 2 * 60 * 60_000,
+    ),
     env.DB.prepare(`DELETE FROM unlocks WHERE expires_at < ?`).bind(now),
     env.DB.prepare(
       `DELETE FROM sessions WHERE expires_at < ?1 OR (revoked_at IS NOT NULL AND revoked_at < ?2)`,
