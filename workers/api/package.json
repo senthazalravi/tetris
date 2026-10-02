@@ -7,6 +7,7 @@
     "dev": "node -e \"require('fs').mkdirSync('../../apps/web/dist',{recursive:true})\" && wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test src/services/*.test.ts",
     "db:migrate:local": "wrangler d1 migrations apply lop-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply lop-db --remote"
   },
