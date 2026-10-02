@@ -41,6 +41,7 @@ import {
   showIncomingNotification,
 } from "@/lib/notify";
 import type { LocalMessage, LocalState, MessageContent } from "./localdb";
+import { handleCallSignal, resetCall } from "./call";
 import { saveKeys, vault } from "./vault";
 import { useSession } from "./session";
 
@@ -226,16 +227,24 @@ let pruneTimer: number | undefined;
 let syncTimer: number | undefined;
 let reconnectAttempts = 0;
 let stopped = true;
+/**
+ * Bumped on every start and stop. A start that was superseded (React mounts,
+ * unmounts and mounts again in development) must not go on to open a second
+ * WebSocket, or every realtime event would be delivered twice.
+ */
+let engineRun = 0;
 
 export async function startEngine() {
   if (started) return;
   started = true;
   stopped = false;
+  const run = ++engineRun;
   const { db } = vault();
   const now = Date.now();
 
   // Anything still "sending" from a previous page never reached the server.
   const stored = await db.allMessages(now);
+  if (run !== engineRun) return;
   const grouped: Record<string, LocalMessage[]> = {};
   for (const m of stored) {
     if (m.state === "sending") {
@@ -262,9 +271,11 @@ export async function startEngine() {
 
   await refreshConversations();
   await refreshContacts();
+  if (run !== engineRun) return;
   set({ ready: true });
 
   await syncNow();
+  if (run !== engineRun) return;
   // History catch-up above stays silent; live messages from here on can chime.
   armIncomingSounds();
   connectSocket();
@@ -276,6 +287,8 @@ export async function startEngine() {
 
 export function stopEngine() {
   stopped = true;
+  engineRun++;
+  resetCall();
   started = false;
   ws?.close();
   ws = null;
@@ -377,6 +390,9 @@ function handleEvent(ev: RealtimeEvent) {
       }
       break;
     }
+    case "call.signal":
+      void handleCallSignal(ev);
+      break;
     case "wipe.completed":
       void useSession.getState().remoteWipe();
       break;
@@ -564,6 +580,7 @@ async function syncPass() {
         (m.content.kind === "text" ||
           m.content.kind === "file" ||
           m.content.kind === "poll" ||
+          (m.content.kind === "call" && m.content.call?.status === "missed") ||
           m.content.kind === "undecryptable"),
     );
     if (audible.length) {
@@ -579,6 +596,13 @@ function announceIncoming(msgs: LocalMessage[]) {
   for (const m of msgs) perConv.set(m.convId, (perConv.get(m.convId) ?? 0) + 1);
   if (perConv.size !== 1) {
     showIncomingNotification(`${msgs.length} new messages in ${perConv.size} chats`, "tetris");
+    return;
+  }
+  const only = msgs.length === 1 ? msgs[0] : undefined;
+  if (only && only.content.kind === "call") {
+    const callConv = convFor(only.convId);
+    const who = callConv ? nameOf(get().nicknames, callConv.peer) : "Someone";
+    showIncomingNotification(`Missed voice call from ${who}`, only.convId);
     return;
   }
   const first = [...perConv][0];
@@ -915,7 +939,10 @@ async function deliver(msg: LocalMessage) {
 
     // 2. Encrypt + post. A group message is sealed separately for every member.
     // Reactions, edits and poll votes are invisible carriers: no email nudge for them.
-    const notify = !(content.kind === "reaction" || content.kind === "vote" || content.kind === "edit");
+    const notify =
+      content.kind === "call"
+        ? content.call?.status === "missed"
+        : !(content.kind === "reaction" || content.kind === "vote" || content.kind === "edit");
     const result = conv.group
       ? await sendToGroup(conv, msg.id, content, attachmentId, notify)
       : await withLock(`peer:${conv.peer.userId}`, async () => {
@@ -969,6 +996,28 @@ async function deliver(msg: LocalMessage) {
     }
     return fail(e instanceof Error ? e.message : "Message failed to send");
   }
+}
+
+/** Write a finished voice call into the chat (end-to-end encrypted like any message). */
+export async function sendCallLog(
+  convId: string,
+  call: { status: "missed" | "declined" | "ended"; durationMs?: number },
+): Promise<void> {
+  const conv = convFor(convId);
+  if (!conv || conv.group) return;
+  const now = Date.now();
+  const msg: LocalMessage = {
+    id: newMessageId(),
+    convId,
+    senderId: me(),
+    direction: "out",
+    createdAt: now,
+    expiresAt: now + ttlFor(conv),
+    state: "sending",
+    content: { v: 1, kind: "call", body: "", call },
+  };
+  await saveAndShow(msg);
+  await deliver(msg);
 }
 
 /* ---------------- delete ---------------- */
