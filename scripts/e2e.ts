@@ -182,6 +182,7 @@ class Client {
     members: Array<{ userId: string }>,
     text: string,
     attachmentId?: string,
+    notify?: boolean,
   ) {
     const copies: any[] = [];
     const next: Array<[string, any]> = [];
@@ -207,6 +208,7 @@ class Client {
       senderDeviceId: this.deviceId,
       copies,
       attachmentId,
+      notify,
     });
     if (r.status === 201) for (const [uid, st] of next) this.sessions.set(uid, st);
     return { id, ...r };
@@ -596,6 +598,20 @@ async function main() {
   const grow = (await g2.req("GET", "/sync?ts=0&id=")).data.messages.find((m: any) => m.messageId === gatt.id);
   assert.equal(grow.attachmentId, gup.data.attachmentId);
   ok("group attachments: members download and decrypt, outsiders are refused");
+
+  // email nudges: normal messages count, invisible carriers (reactions, edits, votes) do not
+  const quiet = await g1.sendGroup(gconv.id, others, "carrier", undefined, false);
+  assert.equal(quiet.status, 201, JSON.stringify(quiet.data));
+  const flags = (id: string) =>
+    JSON.parse(
+      execSync(
+        `npx wrangler d1 execute lop-db --local --json --command "SELECT notify FROM messages WHERE group_msg_id = '${id}' AND canonical = 0"`,
+        { cwd: "workers/api", encoding: "utf8" },
+      ),
+    )[0].results.map((r: any) => r.notify);
+  assert.deepEqual([...new Set(flags(gsent.id))], [1], "normal group messages are notifiable");
+  assert.deepEqual([...new Set(flags(quiet.id))], [0], "carriers are not");
+  ok("notifications: only real messages are counted toward email digests");
 
   // outsiders cannot post; delete for everyone removes every copy
   const bad = await outsider.sendGroup(gconv.id, others, "let me in").catch(() => null);

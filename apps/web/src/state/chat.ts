@@ -791,6 +791,7 @@ async function sendToGroup(
   messageId: string,
   content: MessageEnvelope,
   attachmentId: string | undefined,
+  notify: boolean,
 ): Promise<{ createdAt: number; expiresAt: number }> {
   let forceUser: string | null = null;
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -821,7 +822,7 @@ async function sendToGroup(
       try {
         const res = await api.post<{ createdAt: number; expiresAt: number }>(
           `/conversations/${conv.id}/group-messages`,
-          { messageId, senderDeviceId: vault().deviceId, copies, attachmentId },
+          { messageId, senderDeviceId: vault().deviceId, copies, attachmentId, notify },
         );
         for (const [userId, st] of advanced) await storeSession(userId, st);
         return res;
@@ -881,8 +882,10 @@ async function deliver(msg: LocalMessage) {
     }
 
     // 2. Encrypt + post. A group message is sealed separately for every member.
+    // Reactions, edits and poll votes are invisible carriers: no email nudge for them.
+    const notify = !(content.kind === "reaction" || content.kind === "vote" || content.kind === "edit");
     const result = conv.group
-      ? await sendToGroup(conv, msg.id, content, attachmentId)
+      ? await sendToGroup(conv, msg.id, content, attachmentId, notify)
       : await withLock(`peer:${conv.peer.userId}`, async () => {
           for (let attempt = 0; attempt < 2; attempt++) {
             const liveConv = convFor(msg.convId) ?? conv;
@@ -898,6 +901,7 @@ async function deliver(msg: LocalMessage) {
                   cryptoHeader: enc.message.cryptoHeader,
                   ciphertext: enc.message.ciphertext,
                   attachmentId,
+                  notify,
                 },
               );
               await storeSession(conv.peer.userId, enc.state);
