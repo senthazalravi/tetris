@@ -17,6 +17,11 @@ export interface Env {
   MAIL_FROM?: string;
   /** "true" logs the digest instead of sending it (local testing). */
   MAIL_DRY_RUN?: string;
+  /** Optional TURN relay for voice calls behind strict NATs (comma-separated urls). */
+  TURN_URLS?: string;
+  TURN_USERNAME?: string;
+  /** Wrangler secret. */
+  TURN_CREDENTIAL?: string;
   /** Wrangler secret. When set, register/login require a Turnstile token. */
   TURNSTILE_SECRET?: string;
 }

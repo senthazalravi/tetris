@@ -23,14 +23,16 @@ export class UserGateway extends DurableObject {
 
     if (request.method === "POST" && url.pathname === "/push") {
       const payload = await request.text();
+      let delivered = 0;
       for (const ws of this.ctx.getWebSockets()) {
         try {
           ws.send(payload);
+          delivered += 1;
         } catch {
           // Socket is closing; the runtime cleans it up.
         }
       }
-      return Response.json({ ok: true });
+      return Response.json({ ok: true, delivered });
     }
 
     return new Response("Not found", { status: 404 });
