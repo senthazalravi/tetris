@@ -33,6 +33,13 @@ export function Thread({ conv }: { conv: ConversationDto }) {
   const nicknames = useChat((s) => s.nicknames);
   const peerName = nameOf(nicknames, conv.peer);
   const group = conv.group;
+  const mentionable = useMemo(
+    () =>
+      group
+        ? Object.fromEntries(group.members.map((u) => [u.username.toLowerCase(), u.userId]))
+        : undefined,
+    [group],
+  );
   const memberNames = useMemo(
     () =>
       group
@@ -158,6 +165,7 @@ export function Thread({ conv }: { conv: ConversationDto }) {
         m={m}
         peerName={peerName}
         names={memberNames}
+        mentions={mentionable}
         senderName={
           group && m.direction === "in" && (!prev || prev.senderId !== m.senderId)
             ? memberNames?.[m.senderId]

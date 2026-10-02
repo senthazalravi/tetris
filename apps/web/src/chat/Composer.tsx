@@ -41,7 +41,7 @@ import {
   useChat,
 } from "@/state/chat";
 import { useSession } from "@/state/session";
-import { IconButton } from "@/ui/kit";
+import { Avatar, IconButton } from "@/ui/kit";
 import { useOutside } from "@/ui/hooks";
 import { CameraModal } from "./CameraModal";
 import { EmojiPicker } from "./EmojiPicker";
@@ -65,8 +65,20 @@ interface MenuItem {
 }
 
 const MENU: MenuItem[] = [
-  { id: "document", label: "Document", hint: "PDF, Word, Excel, ZIP, any file", icon: FileText, color: "#7f66ff" },
-  { id: "media", label: "Photos & videos", hint: "Videos up to 16 MB", icon: ImageIcon, color: "#0a8cff" },
+  {
+    id: "document",
+    label: "Document",
+    hint: "PDF, Word, Excel, ZIP, any file",
+    icon: FileText,
+    color: "#7f66ff",
+  },
+  {
+    id: "media",
+    label: "Photos & videos",
+    hint: "Videos up to 16 MB",
+    icon: ImageIcon,
+    color: "#0a8cff",
+  },
   { id: "camera", label: "Camera", hint: "Take a photo now", icon: Camera, color: "#ff2e74" },
   { id: "audio", label: "Audio", hint: "Music and recordings", icon: Headphones, color: "#ff8a1c" },
   { id: "poll", label: "Poll", hint: "Ask the chat a question", icon: BarChart3, color: "#f5a800" },
@@ -88,7 +100,10 @@ export function Composer({
 }) {
   const myId = useSession((s) => s.user?.id);
   const reply = useChat((s) => s.replyTo[conv.id] ?? null);
-  const peerName = nameOf(useChat((s) => s.nicknames), conv.peer);
+  const peerName = nameOf(
+    useChat((s) => s.nicknames),
+    conv.peer,
+  );
   const editing = useChat((s) => s.editing[conv.id] ?? null);
   const [text, setText] = useState("");
   const [emoji, setEmoji] = useState(false);
@@ -96,13 +111,22 @@ export function Composer({
   const [poll, setPoll] = useState(false);
   const [camera, setCamera] = useState(false);
   const area = useRef<HTMLTextAreaElement>(null);
+  const [caret, setCaret] = useState(0);
+  const [mentionIdx, setMentionIdx] = useState(0);
+  const [mentionDismissed, setMentionDismissed] = useState<number | null>(null);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textRef = useRef(text);
   textRef.current = text;
   const editingRef = useRef(editing);
   editingRef.current = editing;
-  const picker = useOutside<HTMLDivElement>(emoji, useCallback(() => setEmoji(false), []));
-  const attachMenu = useOutside<HTMLDivElement>(menu, useCallback(() => setMenu(false), []));
+  const picker = useOutside<HTMLDivElement>(
+    emoji,
+    useCallback(() => setEmoji(false), []),
+  );
+  const attachMenu = useOutside<HTMLDivElement>(
+    menu,
+    useCallback(() => setMenu(false), []),
+  );
   const inputs = {
     document: useRef<HTMLInputElement>(null),
     media: useRef<HTMLInputElement>(null),
@@ -157,7 +181,11 @@ export function Composer({
   useEffect(() => {
     if (!editing) return;
     onFile(null);
-    setText(editing.content.kind === "text" || editing.content.kind === "file" ? editing.content.body : "");
+    setText(
+      editing.content.kind === "text" || editing.content.kind === "file"
+        ? editing.content.body
+        : "",
+    );
     requestAnimationFrame(() => {
       const el = area.current;
       if (!el) return;
@@ -211,7 +239,71 @@ export function Composer({
     requestAnimationFrame(() => area.current?.focus());
   }
 
+  // @mentions (groups only): the "@word" being typed right before the caret.
+  const mention = (() => {
+    if (!conv.group) return null;
+    const before = text.slice(0, caret);
+    const m = /(^|\s)@([a-z0-9_]*)$/i.exec(before);
+    if (!m) return null;
+    const start = before.length - m[2]!.length - 1;
+    if (mentionDismissed === start) return null;
+    return { start, query: m[2]!.toLowerCase() };
+  })();
+  const mentionMatches = mention
+    ? (conv.group?.members ?? [])
+        .filter(
+          (u) =>
+            u.userId !== myId &&
+            (u.username.toLowerCase().includes(mention.query) ||
+              u.displayName.toLowerCase().includes(mention.query)),
+        )
+        .sort(
+          (a, b) =>
+            Number(b.username.toLowerCase().startsWith(mention.query)) -
+            Number(a.username.toLowerCase().startsWith(mention.query)),
+        )
+        .slice(0, 6)
+    : [];
+  const mentionOpen = mention !== null && mentionMatches.length > 0;
+
+  function pickMention(username: string) {
+    if (!mention) return;
+    const el = area.current;
+    const end = caret;
+    const next = `${text.slice(0, mention.start)}@${username} ${text.slice(end)}`;
+    const pos = mention.start + username.length + 2;
+    setText(next);
+    setCaret(pos);
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(pos, pos);
+    });
+  }
+
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (mentionOpen && !e.nativeEvent.isComposing) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionIdx((i) => (i + 1) % mentionMatches.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionIdx((i) => (i - 1 + mentionMatches.length) % mentionMatches.length);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        const u = mentionMatches[Math.min(mentionIdx, mentionMatches.length - 1)];
+        if (u) pickMention(u.username);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMentionDismissed(mention!.start);
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       submit();
@@ -254,7 +346,9 @@ export function Composer({
     reply?.content.kind === "text"
       ? reply.content.body
       : reply?.content.kind === "file"
-        ? reply.content.body || (reply.content.attachment?.voice ? "Voice message" : reply.content.attachment?.name) || "Attachment"
+        ? reply.content.body ||
+          (reply.content.attachment?.voice ? "Voice message" : reply.content.attachment?.name) ||
+          "Attachment"
         : reply?.content.kind === "poll"
           ? `Poll: ${reply.content.poll?.question ?? ""}`
           : "";
@@ -269,7 +363,11 @@ export function Composer({
             </div>
             <div className="truncate text-muted">{replyText}</div>
           </div>
-          <button onClick={() => setReplyTo(conv.id, null)} aria-label="Cancel reply" className="text-muted hover:text-fg">
+          <button
+            onClick={() => setReplyTo(conv.id, null)}
+            aria-label="Cancel reply"
+            className="text-muted hover:text-fg"
+          >
             <X size={16} />
           </button>
         </div>
@@ -281,10 +379,16 @@ export function Composer({
           <div className="min-w-0 flex-1 text-[13px]">
             <div className="font-semibold text-pop">Editing message</div>
             <div className="truncate text-muted">
-              {editing.content.kind === "text" || editing.content.kind === "file" ? editing.content.body : ""}
+              {editing.content.kind === "text" || editing.content.kind === "file"
+                ? editing.content.body
+                : ""}
             </div>
           </div>
-          <button onClick={cancelEdit} aria-label="Cancel edit" className="text-muted hover:text-fg">
+          <button
+            onClick={cancelEdit}
+            aria-label="Cancel edit"
+            className="text-muted hover:text-fg"
+          >
             <X size={16} />
           </button>
         </div>
@@ -295,7 +399,13 @@ export function Composer({
           {preview && kind === "image" ? (
             <img src={preview} alt="" className="h-14 w-14 rounded-lg object-cover" />
           ) : preview && kind === "video" ? (
-            <video src={preview} muted playsInline preload="metadata" className="h-14 w-14 rounded-lg bg-black object-cover" />
+            <video
+              src={preview}
+              muted
+              playsInline
+              preload="metadata"
+              className="h-14 w-14 rounded-lg bg-black object-cover"
+            />
           ) : (
             <span className="flex h-14 w-14 items-center justify-center rounded-lg bg-s3 text-muted">
               {kind === "audio" ? <Music size={22} /> : <FileText size={22} />}
@@ -314,7 +424,11 @@ export function Composer({
       )}
 
       {recorder.recording ? (
-        <div className="flex items-center gap-2" role="group" aria-label="Recording a voice message">
+        <div
+          className="flex items-center gap-2"
+          role="group"
+          aria-label="Recording a voice message"
+        >
           <IconButton label="Discard recording" onClick={recorder.cancel} className="!text-danger">
             <Trash2 size={20} />
           </IconButton>
@@ -323,8 +437,12 @@ export function Composer({
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-danger opacity-70" />
               <span className="relative inline-flex h-3 w-3 rounded-full bg-danger" />
             </span>
-            <span className="tabular text-[15px] font-medium" aria-live="off">{clock(recorder.elapsed)}</span>
-            <span className="truncate text-sm text-muted">Recording... encrypted when you send</span>
+            <span className="tabular text-[15px] font-medium" aria-live="off">
+              {clock(recorder.elapsed)}
+            </span>
+            <span className="truncate text-sm text-muted">
+              Recording... encrypted when you send
+            </span>
           </div>
           <button
             onClick={recorder.send}
@@ -337,7 +455,11 @@ export function Composer({
       ) : (
         <div className="flex items-end gap-1.5">
           <div className="relative" ref={picker}>
-            <IconButton label="Emoji" onClick={() => setEmoji((v) => !v)} className={emoji ? "bg-s3 text-fg" : ""}>
+            <IconButton
+              label="Emoji"
+              onClick={() => setEmoji((v) => !v)}
+              className={emoji ? "bg-s3 text-fg" : ""}
+            >
               <Smile size={21} />
             </IconButton>
             {emoji && (
@@ -403,22 +525,55 @@ export function Composer({
             />
           ))}
 
-          <textarea
-            ref={area}
-            value={text}
-            rows={1}
-            onChange={(e) => {
-              setText(e.target.value);
-              if (e.target.value) typingPing(conv.id);
-              else stopTyping(conv.id);
-            }}
-            onKeyDown={onKeyDown}
-            onPaste={onPaste}
-            onBlur={() => stopTyping(conv.id)}
-            placeholder={file ? "Add a caption…" : "Write a message"}
-            aria-label="Message"
-            className="max-h-40 min-h-11 flex-1 resize-none rounded-3xl border border-line bg-s2 px-4 py-2.5 text-[15px] leading-snug outline-none transition placeholder:text-faint focus:border-pop focus:ring-4 focus:ring-pop/15"
-          />
+          <div className="relative min-w-0 flex-1">
+            {mentionOpen && (
+              <ul
+                role="listbox"
+                aria-label="Mention a member"
+                className="panel pop-in absolute bottom-full left-0 z-30 mb-2 w-72 max-w-full overflow-hidden rounded-2xl p-1.5 shadow-[var(--shadow)]"
+              >
+                {mentionMatches.map((u, idx) => (
+                  <li key={u.userId} role="option" aria-selected={idx === mentionIdx}>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => pickMention(u.username)}
+                      onMouseEnter={() => setMentionIdx(idx)}
+                      className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-1.5 text-left transition ${
+                        idx === mentionIdx ? "bg-s3" : "hover:bg-s2"
+                      }`}
+                    >
+                      <Avatar name={u.displayName} seed={u.userId} url={u.avatarUrl} size={28} />
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium">{u.displayName}</span>
+                        <span className="block truncate text-xs text-muted">@{u.username}</span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <textarea
+              ref={area}
+              value={text}
+              rows={1}
+              onChange={(e) => {
+                setText(e.target.value);
+                setCaret(e.target.selectionStart ?? e.target.value.length);
+                setMentionIdx(0);
+                if (e.target.value) typingPing(conv.id);
+                else stopTyping(conv.id);
+              }}
+              onKeyDown={onKeyDown}
+              onKeyUp={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
+              onClick={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
+              onPaste={onPaste}
+              onBlur={() => stopTyping(conv.id)}
+              placeholder={file ? "Add a caption…" : "Write a message"}
+              aria-label="Message"
+              className="max-h-40 min-h-11 w-full resize-none rounded-3xl border border-line bg-s2 px-4 py-2.5 text-[15px] leading-snug outline-none transition placeholder:text-faint focus:border-pop focus:ring-4 focus:ring-pop/15"
+            />
+          </div>
 
           {canSend || editing ? (
             <button

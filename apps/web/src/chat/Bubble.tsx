@@ -65,7 +65,56 @@ export function Ticks({ state }: { state: LocalMessage["state"] }) {
   }
 }
 
-function Linked({ text }: { text: string }) {
+const MENTION = /@([a-z0-9_]{3,32})/gi;
+
+/** Plain text with @username picked out when it names a member of this group. */
+function Mentioned({
+  value,
+  mentions,
+  myId,
+  out,
+}: {
+  value: string;
+  mentions?: Record<string, string>;
+  myId: string;
+  out: boolean;
+}) {
+  if (!mentions) return <>{value}</>;
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  for (const m of value.matchAll(MENTION)) {
+    const userId = mentions[m[1]!.toLowerCase()];
+    if (!userId || m.index === undefined) continue;
+    if (m.index > last) parts.push(value.slice(last, m.index));
+    const me = userId === myId;
+    parts.push(
+      <span
+        key={m.index}
+        className={`rounded px-0.5 font-semibold ${
+          out ? "bg-white/25" : me ? "bg-pop/20 text-pop" : "text-pop"
+        }`}
+      >
+        {m[0]}
+      </span>,
+    );
+    last = m.index + m[0].length;
+  }
+  if (last === 0) return <>{value}</>;
+  if (last < value.length) parts.push(value.slice(last));
+  return <>{parts}</>;
+}
+
+function Linked({
+  text,
+  mentions,
+  myId,
+  out,
+}: {
+  text: string;
+  mentions?: Record<string, string>;
+  myId: string;
+  out: boolean;
+}) {
   return (
     <>
       {linkify(text).map((p, i) =>
@@ -80,7 +129,9 @@ function Linked({ text }: { text: string }) {
             {p.value}
           </a>
         ) : (
-          <span key={i}>{p.value}</span>
+          <span key={i}>
+            <Mentioned value={p.value} mentions={mentions} myId={myId} out={out} />
+          </span>
         ),
       )}
     </>
@@ -97,6 +148,7 @@ function BubbleImpl({
   highlight,
   names,
   senderName,
+  mentions,
 }: {
   m: LocalMessage;
   peerName: string;
@@ -107,6 +159,8 @@ function BubbleImpl({
   names?: Record<string, string>;
   /** Group chats: show this author above an incoming bubble. */
   senderName?: string;
+  /** Group chats: lowercase username to userId, for highlighting @mentions. */
+  mentions?: Record<string, string>;
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number; up: boolean } | null>(null);
   const [more, setMore] = useState(false);
@@ -251,7 +305,7 @@ function BubbleImpl({
 
         {text && c.kind !== "poll" && (
           <span className={bigEmoji ? "text-4xl leading-tight" : ""}>
-            <Linked text={text} />
+            <Linked text={text} mentions={mentions} myId={myId} out={out} />
           </span>
         )}
 
