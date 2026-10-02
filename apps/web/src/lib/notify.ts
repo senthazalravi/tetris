@@ -104,6 +104,36 @@ export function playIncomingTone() {
     .catch(() => {});
 }
 
+/* ------------------------------ ringtone ------------------------------ */
+
+let ringTimer: number | undefined;
+
+/** A repeating two-tone ring for an incoming call. Call stopRingtone() to end it. */
+export function startRingtone() {
+  stopRingtone();
+  const ac = audio();
+  if (!ac) return;
+  const ring = () => {
+    void ac
+      .resume()
+      .then(() => {
+        const t = ac.currentTime;
+        note(ac, t, 659, 0.3, 0.6);
+        note(ac, t + 0.32, 880, 0.3, 0.6);
+        note(ac, t + 0.64, 659, 0.3, 0.6);
+        note(ac, t + 0.96, 880, 0.45, 0.6);
+      })
+      .catch(() => {});
+  };
+  ring();
+  ringTimer = window.setInterval(ring, 2800);
+}
+
+export function stopRingtone() {
+  window.clearInterval(ringTimer);
+  ringTimer = undefined;
+}
+
 /* ------------------------- system notifications ------------------------- */
 
 export type NotifyPermission = NotificationPermission | "unsupported";
@@ -123,13 +153,18 @@ export async function requestNotificationPermission(): Promise<NotifyPermission>
 }
 
 /** Shown only while the app is in the background; clicking brings it back. */
-export function showIncomingNotification(body: string, tag: string) {
+export function showIncomingNotification(
+  body: string,
+  tag: string,
+  extra: { requireInteraction?: boolean } = {},
+) {
   if (notificationPermission() !== "granted") return;
   if (document.visibilityState === "visible" && document.hasFocus()) return;
   const options: NotificationOptions & { renotify?: boolean } = {
     body,
     tag,
     renotify: true,
+    requireInteraction: extra.requireInteraction ?? false,
     icon: "/icons/icon-192.png",
     badge: "/icons/icon-192.png",
   };
