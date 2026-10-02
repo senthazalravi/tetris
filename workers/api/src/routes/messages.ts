@@ -10,6 +10,7 @@ import type { Env } from "../env";
 import { avatarUrl, requireUnlocked, type AppEnv } from "../lib/session";
 import { hit } from "../lib/ratelimit";
 import { pushToUser } from "../lib/push";
+import { settleGroupAccess } from "./groups";
 import {
   MESSAGE_ID_PATTERN,
   b64Decode,
@@ -100,7 +101,7 @@ async function loadGroupMembers(env: Env, convId: string): Promise<ConversationP
      FROM group_members gm
      JOIN users u ON u.id = gm.user_id
      LEFT JOIN devices d ON d.user_id = u.id AND d.revoked_at IS NULL
-     WHERE gm.conversation_id = ?
+     WHERE gm.conversation_id = ? AND gm.access = 'granted'
      ORDER BY u.username`,
   )
     .bind(convId)
@@ -114,14 +115,17 @@ async function loadGroupMembers(env: Env, convId: string): Promise<ConversationP
  * refresh that row here (a wipe clears it).
  */
 async function loadGroups(env: Env, me: { id: string; communication_epoch: number }) {
+  await settleGroupAccess(env, me.id);
+  // Groups whose code was failed are gone for good; unentered ones are listed locked.
   const rows = await env.DB.prepare(
-    `SELECT c.id, c.name, c.last_message_at
+    `SELECT c.id, c.name, c.last_message_at, gm.access
      FROM group_members gm JOIN conversations c ON c.id = gm.conversation_id
-     WHERE gm.user_id = ? AND c.kind = 'group'`,
+     WHERE gm.user_id = ? AND c.kind = 'group' AND gm.access != 'denied'`,
   )
     .bind(me.id)
-    .all<{ id: string; name: string | null; last_message_at: number }>();
-  const groups = rows.results ?? [];
+    .all<{ id: string; name: string | null; last_message_at: number; access: string }>();
+  const all = rows.results ?? [];
+  const groups = all.filter((g) => g.access === "granted");
   if (groups.length) {
     const now = Date.now();
     await env.DB.batch(
@@ -135,9 +139,10 @@ async function loadGroups(env: Env, me: { id: string; communication_epoch: numbe
     );
   }
   const out: ConversationDto[] = [];
-  for (const g of groups) {
-    const members = await loadGroupMembers(env, g.id);
+  for (const g of all) {
     const name = g.name ?? "Group";
+    const locked = g.access !== "granted";
+    const members = locked ? [] : await loadGroupMembers(env, g.id);
     out.push({
       id: g.id,
       lastMessageAt: g.last_message_at,
@@ -152,6 +157,7 @@ async function loadGroups(env: Env, me: { id: string; communication_epoch: numbe
         signingKey: null,
       },
       group: { name, members },
+      ...(locked ? { locked: true } : {}),
     });
   }
   return out;
@@ -413,7 +419,7 @@ messageRoutes.post("/conversations/:id/group-messages", requireUnlocked, async (
   const convId = c.req.param("id");
   const isMember = await c.env.DB.prepare(
     `SELECT 1 AS x FROM group_members gm JOIN conversations c ON c.id = gm.conversation_id
-     WHERE gm.conversation_id = ? AND gm.user_id = ? AND c.kind = 'group'`,
+     WHERE gm.conversation_id = ? AND gm.user_id = ? AND c.kind = 'group' AND gm.access = 'granted'`,
   )
     .bind(convId, me.id)
     .first();
@@ -460,7 +466,8 @@ messageRoutes.post("/conversations/:id/group-messages", requireUnlocked, async (
   const marks = ids.map((_, i) => `?${i + 2}`).join(",");
   const targets = await c.env.DB.prepare(
     `SELECT u.id AS uid, u.communication_epoch AS epoch, d.id AS device_id,
-            (SELECT 1 FROM group_members gm WHERE gm.conversation_id = ?1 AND gm.user_id = u.id) AS member
+            (SELECT 1 FROM group_members gm
+             WHERE gm.conversation_id = ?1 AND gm.user_id = u.id AND gm.access = 'granted') AS member
      FROM users u LEFT JOIN devices d ON d.user_id = u.id AND d.revoked_at IS NULL
      WHERE u.id IN (${marks})`,
   )

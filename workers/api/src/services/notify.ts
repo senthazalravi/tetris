@@ -110,6 +110,10 @@ export async function sweepNotifications(env: Env): Promise<number> {
      JOIN users u ON u.id = m.recipient_user_id
      WHERE m.notified_at IS NULL AND m.recipient_user_id != '' AND m.deleted_at IS NULL
        AND m.notify = 1 AND m.delivery_state != 'read'
+       AND NOT EXISTS (
+         SELECT 1 FROM group_members g
+         WHERE g.conversation_id = m.conversation_id AND g.user_id = m.recipient_user_id
+           AND g.access != 'granted')
        AND m.created_at <= ?1 AND m.expires_at > ?2
        AND (u.last_notified_at IS NULL OR u.last_notified_at <= ?3)
      GROUP BY m.recipient_user_id, m.conversation_id, m.sender_user_id`,

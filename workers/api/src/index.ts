@@ -7,6 +7,7 @@ import { deviceRoutes } from "./routes/devices";
 import { messageRoutes } from "./routes/messages";
 import { attachmentRoutes } from "./routes/attachments";
 import { callRoutes } from "./routes/calls";
+import { groupRoutes } from "./routes/groups";
 import {
   hasValidVaultToken,
   loadSession,
@@ -64,6 +65,7 @@ app.route("/api/v1", deviceRoutes);
 app.route("/api/v1", messageRoutes);
 app.route("/api/v1", attachmentRoutes);
 app.route("/api/v1", callRoutes);
+app.route("/api/v1", groupRoutes);
 
 app.notFound((c) => c.json({ error: "Not found" }, 404));
 app.onError((err, c) => {

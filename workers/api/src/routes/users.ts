@@ -126,7 +126,7 @@ userRoutes.get("/users/search", requireUnlocked, async (c) => {
     .all<{ id: string; username: string; display_name: string; avatar_version: number }>();
   const groupRows = await c.env.DB.prepare(
     `SELECT c.id, c.name FROM group_members gm JOIN conversations c ON c.id = gm.conversation_id
-     WHERE gm.user_id = ?1 AND c.kind = 'group' AND LOWER(c.name) LIKE ?2 ESCAPE '\\'
+     WHERE gm.user_id = ?1 AND c.kind = 'group' AND gm.access != 'denied' AND LOWER(c.name) LIKE ?2 ESCAPE '\\'
      ORDER BY c.name LIMIT 5`,
   )
     .bind(me.id, `%${gEscaped}%`)
