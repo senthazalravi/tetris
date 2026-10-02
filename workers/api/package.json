@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "node -e \"require('fs').mkdirSync('../../apps/web/dist',{recursive:true})\" && wrangler dev",
-    "deploy": "wrangler deploy",
+    "build": "npm --prefix ../../apps/web ci && npm --prefix ../../apps/web run build",
+    "deploy": "npm run build && wrangler deploy",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx --test src/services/*.test.ts",
     "db:migrate:local": "wrangler d1 migrations apply lop-db --local",
