@@ -14,6 +14,7 @@ Developed by [Manas Dutta](https://www.manasdutta.com/).
 - **Search to chat.** Press `Ctrl+K` (Windows, Linux) or `Cmd+K` (macOS), or click the search bar, and type part of a username or a group name. Matches appear as you type.
 - **Chat beside the game.** Opening a chat slides the game to the left and shows the conversation on the right. Press `Esc` or the close button to go back to the game.
 - **Groups.** Predefined groups are end-to-end encrypted: each message is sealed separately for every member. Members can send text, attachments, voice notes, polls and reactions.
+- **Group code.** Each group has a four-digit entry code. The first time you open a group you get 30 seconds and two tries to enter it. The right code opens the group for good and it is never asked again. A wrong second try, or running out of time, closes the group to you for good: it disappears from your search and you receive nothing from it, including email notifications. The code is set in `groups.local.json`.
 - **@mentions in groups.** Type `@` and a few letters to pick a member. Mentions are highlighted in the message.
 - **Messages vanish.** Direct messages and files disappear after 24 hours. Group messages and files last 7 days.
 - **Email notifications.** If you have unread messages after a few minutes, you get one short email that says how many messages arrived and from whom (a person or a group). The email never shows the messages themselves.
@@ -48,7 +49,7 @@ Create your users and groups. These files stay on your machine and are never com
 
 ```bash
 cp users.example.json users.local.json     # username, email, 8-digit passcode per user
-cp groups.example.json groups.local.json   # group name and member usernames
+cp groups.example.json groups.local.json   # group name, four-digit code and member usernames
 npm run users:seed
 npm run groups:seed
 ```
