@@ -11,6 +11,12 @@ export interface Env {
   ALLOWED_ORIGINS?: string;
   /** Wrangler secret. Keys the fake-salt oracle defence in /auth/prelogin. */
   SESSION_SECRET?: string;
+  /** Wrangler secret. Resend API key for the unread-message email digests. */
+  RESEND_API_KEY?: string;
+  /** Sender shown on digests, e.g. "Tetris <notify@mail.example.com>". */
+  MAIL_FROM?: string;
+  /** "true" logs the digest instead of sending it (local testing). */
+  MAIL_DRY_RUN?: string;
   /** Wrangler secret. When set, register/login require a Turnstile token. */
   TURNSTILE_SECRET?: string;
 }

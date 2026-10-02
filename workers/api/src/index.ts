@@ -15,6 +15,7 @@ import {
 } from "./lib/session";
 import { runExpiryCleanup } from "./services/expiry";
 import { sweepAllChallenges } from "./services/challenges";
+import { sweepNotifications } from "./services/notify";
 import { UserGateway } from "./realtime/UserGateway";
 
 export { UserGateway };
@@ -78,6 +79,7 @@ export default {
       (async () => {
         await sweepAllChallenges(env);
         await runExpiryCleanup(env);
+        await sweepNotifications(env);
       })(),
     );
   },

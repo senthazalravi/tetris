@@ -33,6 +33,8 @@ new_sqlite_classes = ["UserGateway"]
 [vars]
 COOKIE_SECURE = "true"
 APP_ORIGIN = "https://tetris.manasdutta512.workers.dev"
+# Unread-message digests go out through Resend. The API key is a secret (RESEND_API_KEY).
+MAIL_FROM = "Tetris <notify@mail.manasdutta.me>"
 
 [triggers]
 # Every minute: enforces the 30s unlock timeout for abandoned logins and the 24h TTL.
