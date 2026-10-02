@@ -263,7 +263,7 @@ export async function startEngine() {
   // History catch-up above stays silent; live messages from here on can chime.
   armIncomingSounds();
   connectSocket();
-  pollTimer = window.setInterval(() => void syncNow(), 25_000);
+  pollTimer = window.setInterval(() => void syncNow(), 60_000);
   pruneTimer = window.setInterval(() => void pruneExpired(), 30_000);
   document.addEventListener("visibilitychange", onVisible);
   window.addEventListener("focus", onVisible);
