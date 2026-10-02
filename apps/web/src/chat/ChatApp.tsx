@@ -6,6 +6,7 @@ import { Avatar } from "@/ui/kit";
 import { InstallButton } from "@/ui/InstallButton";
 import { ThemeButton } from "@/ui/ThemeButton";
 import { CallOverlay } from "./CallOverlay";
+import { GroupGate } from "./GroupGate";
 import { Profile } from "./Modals";
 import { SearchBar } from "./SearchBar";
 import { Thread } from "./Thread";
@@ -27,7 +28,8 @@ export function ChatApp() {
   const [profile, setProfile] = useState(false);
 
   const active = conversations.find((c) => c.id === activeId) ?? null;
-  const chatOpen = screen === "chat" && active !== null;
+  const chatOpen = screen === "chat" && active !== null && !active.locked;
+  const gateOpen = screen === "chat" && active !== null && active.locked === true;
 
   // Keep syncing and decrypting even while only the game is on screen.
   useEffect(() => {
@@ -121,6 +123,7 @@ export function ChatApp() {
         </main>
       )}
 
+      {gateOpen && active && <GroupGate key={active.id} conv={active} />}
       <CallOverlay />
       {profile && <Profile onClose={() => setProfile(false)} />}
       {toast && (
